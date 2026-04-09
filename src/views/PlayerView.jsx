@@ -1,38 +1,48 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import {
-  doc, setDoc, updateDoc, onSnapshot, serverTimestamp
+  doc, setDoc, onSnapshot,
+  collection, serverTimestamp
 } from 'firebase/firestore';
+import { SubmitRoundPlayer } from '../components/rounds/SubmitRound';
+import { ReactRoundPlayer } from '../components/rounds/ReactRound';
+import { VoteRoundPlayer } from '../components/rounds/VoteRound';
 
 export default function PlayerView() {
   const [roomCode, setRoomCode] = useState('');
   const [name, setName] = useState('');
   const [joined, setJoined] = useState(false);
   const [playerId] = useState(() => crypto.randomUUID());
-  const [status, setStatus] = useState('lobby');
-  const [options, setOptions] = useState([]);
-  const [myVote, setMyVote] = useState(null);
   const [error, setError] = useState(null);
+
+  const [roomStatus, setRoomStatus] = useState('lobby');
+  const [currentRoundId, setCurrentRoundId] = useState(null);
+  const [currentRound, setCurrentRound] = useState(null);
+  const [joinedCode, setJoinedCode] = useState('');
 
   async function joinRoom() {
     const code = roomCode.trim().toUpperCase();
     if (!code || !name.trim()) return;
 
-    const roomRef = doc(db, 'rooms', code);
-    const snap = await import('firebase/firestore').then(({ getDoc }) => getDoc(roomRef));
+    const { getDoc } = await import('firebase/firestore');
+    const snap = await getDoc(doc(db, 'rooms', code));
 
     if (!snap.exists()) {
       setError('Room not found. Check the code and try again.');
       return;
     }
 
+    if (snap.data().status === 'closed') {
+      setError('This session has ended.');
+      return;
+    }
+
     await setDoc(doc(db, 'rooms', code, 'players', playerId), {
       name: name.trim(),
       joinedAt: serverTimestamp(),
-      hasVoted: false,
     });
 
-    setRoomCode(code);
+    setJoinedCode(code);
     setJoined(true);
     setError(null);
   }
@@ -40,49 +50,61 @@ export default function PlayerView() {
   useEffect(() => {
     if (!joined) return;
 
-    const unsub = onSnapshot(doc(db, 'rooms', roomCode), (snap) => {
+    const unsubRoom = onSnapshot(doc(db, 'rooms', joinedCode), snap => {
       const data = snap.data();
       if (!data) return;
-      setStatus(data.status);
-      setOptions(data.options || []);
+      setRoomStatus(data.status);
+      setCurrentRoundId(data.currentRoundId);
     });
+
+    return () => unsubRoom();
+  }, [joined, joinedCode]);
+
+  useEffect(() => {
+    if (!currentRoundId || !joinedCode) {
+      setCurrentRound(null);
+      return;
+    }
+
+    const unsub = onSnapshot(
+      doc(db, 'rooms', joinedCode, 'rounds', currentRoundId),
+      snap => {
+        if (snap.exists()) {
+          setCurrentRound({ id: snap.id, ...snap.data() });
+        }
+      }
+    );
 
     return () => unsub();
-  }, [joined, roomCode]);
-
-  async function castVote(optionId) {
-    if (myVote) return;
-    await setDoc(doc(db, 'rooms', roomCode, 'votes', playerId), {
-      optionId,
-      votedAt: serverTimestamp(),
-    });
-    await updateDoc(doc(db, 'rooms', roomCode, 'players', playerId), {
-      hasVoted: true,
-    });
-    setMyVote(optionId);
-  }
+  }, [currentRoundId, joinedCode]);
 
   if (!joined) {
     return (
-      <div style={{ textAlign: 'center', marginTop: '20vh', fontFamily: 'sans-serif', padding: '1rem' }}>
+      <div style={styles.centered}>
         <h2>Join a Room</h2>
         <input
           value={roomCode}
           onChange={e => setRoomCode(e.target.value.toUpperCase())}
+          onKeyDown={e => e.key === 'Enter' && joinRoom()}
           placeholder="Room code"
           maxLength={4}
-          style={{ display: 'block', margin: '0.5rem auto', padding: '0.75rem', fontSize: '1.5rem', textAlign: 'center', width: '8rem', letterSpacing: '0.3rem' }}
+          style={styles.codeInput}
         />
         <input
           value={name}
           onChange={e => setName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && joinRoom()}
           placeholder="Your name"
-          style={{ display: 'block', margin: '0.5rem auto', padding: '0.75rem', fontSize: '1rem', width: '16rem' }}
+          style={styles.nameInput}
         />
-        {error && <p style={{ color: 'red' }}>{error}</p>}
+        {error && <p style={styles.error}>{error}</p>}
         <button
           onClick={joinRoom}
-          style={{ marginTop: '1rem', padding: '0.75rem 2rem', fontSize: '1rem' }}
+          disabled={!roomCode.trim() || !name.trim()}
+          style={{
+            ...styles.primaryButton,
+            opacity: roomCode.trim() && name.trim() ? 1 : 0.5,
+          }}
         >
           Join
         </button>
@@ -90,52 +112,111 @@ export default function PlayerView() {
     );
   }
 
-  if (status === 'lobby') {
+  if (roomStatus === 'lobby' || !currentRound) {
     return (
-      <div style={{ textAlign: 'center', marginTop: '20vh', fontFamily: 'sans-serif' }}>
-        <h2>You're in, {name.split(' ')[0]}.</h2>
-        <p style={{ color: '#666' }}>Waiting for the host to start voting...</p>
+      <div style={styles.centered}>
+        <h2>You're in.</h2>
+        <p style={styles.subtext}>Waiting for the host to start...</p>
       </div>
     );
   }
 
-  if (status === 'voting') {
+  if (roomStatus === 'reviewing') {
     return (
-      <div style={{ fontFamily: 'sans-serif', padding: '2rem', maxWidth: '500px', margin: '0 auto' }}>
-        <h2>{myVote ? 'Vote cast.' : 'Cast your vote.'}</h2>
-        {options.map(o => (
-          <button
-            key={o.id}
-            onClick={() => castVote(o.id)}
-            disabled={!!myVote}
-            style={{
-              display: 'block',
-              width: '100%',
-              padding: '1rem',
-              marginBottom: '0.75rem',
-              fontSize: '1rem',
-              background: myVote === o.id ? '#4caf50' : myVote ? '#eee' : '#fff',
-              border: '2px solid #ccc',
-              borderRadius: '8px',
-              cursor: myVote ? 'default' : 'pointer',
-            }}
-          >
-            {o.text}
-          </button>
-        ))}
-        {myVote && <p style={{ color: '#666', textAlign: 'center' }}>Waiting for others...</p>}
+      <div style={styles.centered}>
+        <h2>Round complete.</h2>
+        <p style={styles.subtext}>Stand by for the next round.</p>
       </div>
     );
   }
 
-  if (status === 'revealed' || status === 'closed') {
+  if (roomStatus === 'closed') {
     return (
-      <div style={{ textAlign: 'center', marginTop: '20vh', fontFamily: 'sans-serif' }}>
-        <h2>Results are in.</h2>
-        <p style={{ color: '#666' }}>Check the host screen.</p>
+      <div style={styles.centered}>
+        <h2>Session ended.</h2>
+        <p style={styles.subtext}>Thanks for participating.</p>
       </div>
     );
   }
 
-  return null;
+  return (
+    <div>
+      {currentRound.type === 'submit' && (
+        <SubmitRoundPlayer
+          roomCode={joinedCode}
+          round={currentRound}
+          roundId={currentRound.id}
+          playerId={playerId}
+          playerName={name.trim()}
+        />
+      )}
+      {currentRound.type === 'react' && (
+        <ReactRoundPlayer
+          roomCode={joinedCode}
+          round={currentRound}
+          roundId={currentRound.id}
+          playerId={playerId}
+          playerName={name.trim()}
+        />
+      )}
+      {currentRound.type === 'vote' && (
+        <VoteRoundPlayer
+          roomCode={joinedCode}
+          round={currentRound}
+          roundId={currentRound.id}
+          playerId={playerId}
+          playerName={name.trim()}
+        />
+      )}
+    </div>
+  );
 }
+
+const styles = {
+  centered: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    marginTop: '20vh',
+    fontFamily: 'sans-serif',
+    padding: '1rem',
+    gap: '0.75rem',
+  },
+  codeInput: {
+    padding: '0.75rem',
+    fontSize: '2rem',
+    textAlign: 'center',
+    width: '8rem',
+    letterSpacing: '0.4rem',
+    background: '#1e1e1e',
+    color: '#fff',
+    border: '2px solid #444',
+    borderRadius: '8px',
+  },
+  nameInput: {
+    padding: '0.75rem',
+    fontSize: '1rem',
+    width: '16rem',
+    background: '#1e1e1e',
+    color: '#fff',
+    border: '2px solid #444',
+    borderRadius: '8px',
+    textAlign: 'center',
+  },
+  error: {
+    color: '#f44336',
+    fontSize: '0.9rem',
+  },
+  subtext: {
+    color: '#888',
+  },
+  primaryButton: {
+    padding: '0.75rem 2rem',
+    fontSize: '1rem',
+    background: '#4caf50',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+};
