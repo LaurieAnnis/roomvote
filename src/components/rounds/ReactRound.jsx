@@ -149,22 +149,25 @@ export function ReactRoundPlayer({ roomCode, round, roundId, playerId, playerNam
       db, 'rooms', roomCode, 'rounds', roundId, 'reactions', currentOption.id
     );
 
-    const existing = await import('firebase/firestore').then(({ getDoc }) =>
-      getDoc(reactionRef)
-    );
-
-    const counts = existing.exists()
-      ? { ...existing.data().counts }
-      : { '✓': 0, '!': 0, '✗': 0 };
-
-    counts[symbol] = (counts[symbol] || 0) + 1;
-
-    const individual = existing.exists()
-      ? { ...existing.data().individual }
-      : {};
-    individual[playerId] = symbol;
-
-    await setDoc(reactionRef, { counts, individual });
+    const { increment, setDoc: fsSetDoc, updateDoc: fsUpdateDoc, getDoc } = 
+      await import('firebase/firestore');
+    
+    const existing = await getDoc(reactionRef);
+    
+    if (!existing.exists()) {
+      await fsSetDoc(reactionRef, {
+        counts: { '✓': 0, '!': 0, '✗': 0 },
+        individual: { [playerId]: symbol },
+      });
+      await fsUpdateDoc(reactionRef, {
+        [`counts.${symbol}`]: increment(1),
+      });
+    } else {
+      await fsUpdateDoc(reactionRef, {
+        [`counts.${symbol}`]: increment(1),
+        [`individual.${playerId}`]: symbol,
+      });
+    }
 
     setMyReactions(prev => ({ ...prev, [currentOption.id]: symbol }));
   }
