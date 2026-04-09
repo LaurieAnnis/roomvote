@@ -36,6 +36,7 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
     const nextIndex = currentIndex + 1;
     await updateDoc(doc(db, 'rooms', roomCode, 'rounds', roundId), {
       currentItemIndex: nextIndex,
+      timerStartedAt: serverTimestamp(),
     });
     setCurrentIndex(nextIndex);
   }
