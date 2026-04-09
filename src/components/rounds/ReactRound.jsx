@@ -105,6 +105,12 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
           </>
         )}
       </div>
+      <div style={styles.reactedCount}>
+        {currentOption && reactions[currentOption.id]?.individual
+          ? Object.keys(reactions[currentOption.id].individual).length
+          : 0}
+        {' of '}{players.length} reacted
+      </div>
 
       <div style={styles.buttonRow}>
         {!isLast ? (
