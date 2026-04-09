@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import {
   doc, setDoc, updateDoc, onSnapshot,
@@ -8,6 +8,7 @@ import { generateRoomCode } from '../utils/roomCode';
 import { SubmitRoundHost } from '../components/rounds/SubmitRound';
 import { ReactRoundHost } from '../components/rounds/ReactRound';
 import { VoteRoundHost } from '../components/rounds/VoteRound';
+import QRCode from 'qrcode';
 
 const ROUND_TYPES = [
   { value: 'submit', label: 'Submit — players enter free text' },
@@ -16,6 +17,8 @@ const ROUND_TYPES = [
 ];
 
 const DEFAULT_TIMERS = { submit: 180, react: 30, vote: 60 };
+
+const BASE_URL = 'https://roomvote-2026.web.app';
 
 export default function HostView() {
   const [roomCode, setRoomCode] = useState(null);
@@ -26,6 +29,7 @@ export default function HostView() {
   const [rounds, setRounds] = useState([]);
   const [currentRoundId, setCurrentRoundId] = useState(null);
   const [currentRound, setCurrentRound] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
 
   // new round form
   const [newRoundType, setNewRoundType] = useState('submit');
@@ -33,6 +37,17 @@ export default function HostView() {
   const [newRoundTimer, setNewRoundTimer] = useState(180);
   const [newRoundOptions, setNewRoundOptions] = useState('');
   const [showNewRound, setShowNewRound] = useState(false);
+
+  // Generate QR code when room is created
+  useEffect(() => {
+    if (!roomCode) return;
+    const joinUrl = `${BASE_URL}?room=${roomCode}`;
+    QRCode.toDataURL(joinUrl, {
+      width: 200,
+      margin: 1,
+      color: { dark: '#ffffff', light: '#00000000' },
+    }).then(url => setQrDataUrl(url));
+  }, [roomCode]);
 
   async function createRoom() {
     if (!sessionNameInput.trim()) return;
@@ -117,6 +132,37 @@ export default function HostView() {
     setShowNewRound(false);
   }
 
+  async function redoRound() {
+    if (!currentRound) return;
+
+    const roundData = {
+      type: currentRound.type,
+      prompt: currentRound.prompt,
+      status: 'open',
+      timerSeconds: currentRound.timerSeconds,
+      timerStartedAt: serverTimestamp(),
+      currentItemIndex: 0,
+      options: currentRound.type !== 'submit'
+        ? currentRound.options.map(opt => ({
+            id: crypto.randomUUID(),
+            text: opt.text,
+            ...(opt.authorId ? { authorId: opt.authorId } : {}),
+          }))
+        : [],
+      createdAt: serverTimestamp(),
+    };
+
+    const roundRef = await addDoc(
+      collection(db, 'rooms', roomCode, 'rounds'),
+      roundData
+    );
+
+    await updateDoc(doc(db, 'rooms', roomCode), {
+      currentRoundId: roundRef.id,
+      status: 'active',
+    });
+  }
+
   function handleTypeChange(type) {
     setNewRoundType(type);
     setNewRoundTimer(DEFAULT_TIMERS[type]);
@@ -149,6 +195,11 @@ export default function HostView() {
 
       {/* Header */}
       <div style={styles.header}>
+        {qrDataUrl && (
+          <div style={styles.qrContainer}>
+            <img src={qrDataUrl} alt="Scan to join" style={styles.qrImage} />
+          </div>
+        )}
         <div style={styles.roomCode}>{roomCode}</div>
         <div style={styles.sessionName}>{sessionName}</div>
         <div style={styles.playerCount}>
@@ -193,6 +244,12 @@ export default function HostView() {
               sessionName={sessionName}
             />
           )}
+
+          <div style={styles.redoRow}>
+            <button onClick={redoRound} style={styles.redoButton}>
+              ↺ Redo Round
+            </button>
+          </div>
         </div>
       )}
 
@@ -320,12 +377,21 @@ const styles = {
     textAlign: 'center',
     marginBottom: '1rem',
   },
+  qrContainer: {
+    marginTop: '2rem',
+    marginBottom: '2rem',
+    display: 'flex',
+    justifyContent: 'center',
+  },
+  qrImage: {
+    width: '200px',
+    height: '200px',
+  },
   roomCode: {
     fontSize: '4rem',
     fontWeight: 'bold',
     letterSpacing: '0.5rem',
-    marginTop: '2rem',
-    marginBottom: '2rem',  
+    marginBottom: '2rem',
   },
   sessionName: {
     fontSize: '1rem',
@@ -370,6 +436,20 @@ const styles = {
   historyPrompt: {
     fontSize: '0.9rem',
     color: '#ccc',
+  },
+  redoRow: {
+    display: 'flex',
+    justifyContent: 'flex-start',
+    marginTop: '1.5rem',
+  },
+  redoButton: {
+    padding: '0.5rem 1.5rem',
+    fontSize: '0.9rem',
+    background: 'transparent',
+    color: '#ff9800',
+    border: '2px solid #ff9800',
+    borderRadius: '8px',
+    cursor: 'pointer',
   },
   newRoundForm: {
     display: 'flex',
