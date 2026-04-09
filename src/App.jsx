@@ -3,7 +3,11 @@ import HostView from './views/HostView';
 import PlayerView from './views/PlayerView';
 
 export default function App() {
-  const [mode, setMode] = useState(null);
+  const [mode, setMode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('room')) return 'player';
+    return null;
+  });
 
   if (mode === 'host') return <HostView />;
   if (mode === 'player') return <PlayerView />;
