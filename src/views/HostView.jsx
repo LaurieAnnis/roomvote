@@ -324,6 +324,7 @@ const styles = {
     fontSize: '4rem',
     fontWeight: 'bold',
     letterSpacing: '0.5rem',
+    marginBottom: '0.5rem',  
   },
   sessionName: {
     fontSize: '1rem',
