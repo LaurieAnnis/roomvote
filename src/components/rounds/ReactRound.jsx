@@ -347,6 +347,12 @@ const styles = {
     borderRadius: '8px',
     cursor: 'pointer',
   },
+  reactedCount: {
+    textAlign: 'center',
+    color: '#888',
+    fontSize: '0.9rem',
+    marginBottom: '1.5rem',
+  },
   countGreen: { color: '#4caf50', fontSize: '1.1rem' },
   countYellow: { color: '#ff9800', fontSize: '1.1rem' },
   countRed: { color: '#f44336', fontSize: '1.1rem' },
