@@ -9,7 +9,10 @@ import { ReactRoundPlayer } from '../components/rounds/ReactRound';
 import { VoteRoundPlayer } from '../components/rounds/VoteRound';
 
 export default function PlayerView() {
-  const [roomCode, setRoomCode] = useState('');
+  const [roomCode, setRoomCode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return (params.get('room') || '').toUpperCase();
+  });
   const [name, setName] = useState('');
   const [joined, setJoined] = useState(false);
   const [playerId] = useState(() => crypto.randomUUID());
@@ -96,6 +99,7 @@ export default function PlayerView() {
           onKeyDown={e => e.key === 'Enter' && joinRoom()}
           placeholder="Your name"
           style={styles.nameInput}
+          autoFocus={roomCode.length === 4}
         />
         {error && <p style={styles.error}>{error}</p>}
         <button
