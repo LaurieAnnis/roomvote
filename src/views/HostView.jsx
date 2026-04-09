@@ -403,6 +403,8 @@ const styles = {
     borderRadius: '6px',
     width: '100%',
     boxSizing: 'border-box',
+    marginBottom: '1rem',
+    marginTop: '1rem',
   },
   textarea: {
     padding: '0.6rem',
