@@ -203,7 +203,7 @@ export default function HostView() {
           onChange={e => setSessionNameInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && createRoom()}
           placeholder="Session name (e.g. AME 494 Week 1)"
-          style={styles.input}
+          style={{ ...styles.input, width: '20rem', maxWidth: '100%' }}
         />
         <button
           onClick={createRoom}
@@ -426,6 +426,9 @@ const styles = {
     padding: '2rem',
   },
   centered: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
     textAlign: 'center',
     marginTop: '20vh',
     fontFamily: 'sans-serif',
@@ -497,7 +500,7 @@ const styles = {
   },
   redoRow: {
     display: 'flex',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     marginTop: '1.5rem',
   },
   redoButton: {
@@ -513,6 +516,7 @@ const styles = {
     display: 'flex',
     gap: '1rem',
     flexWrap: 'wrap',
+    justifyContent: 'center',
   },
   newRoundForm: {
     display: 'flex',
