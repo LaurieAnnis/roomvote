@@ -11,6 +11,9 @@ import Timer from '../Timer';
 export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName }) {
   const [submissions, setSubmissions] = useState([]);
 
+  const showNames = round.showNames ?? true;
+  const showResultsLive = round.showResultsLive ?? true;
+
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, 'rooms', roomCode, 'rounds', roundId, 'submissions'),
@@ -43,7 +46,7 @@ export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName
         <h3 style={styles.sectionLabel}>All submissions ({submissions.length})</h3>
         {submissions.map(s => (
           <div key={s.id} style={styles.submissionRow}>
-            <span style={styles.playerName}>{s.playerName}</span>
+            {showNames && <span style={styles.playerName}>{s.playerName}</span>}
             <span style={styles.submissionText}>{s.text}</span>
           </div>
         ))}
@@ -63,30 +66,46 @@ export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName
         />
       )}
 
-      <div style={styles.columns}>
-        <div style={styles.column}>
-          <h3 style={styles.sectionLabel}>
-            Submitted ({submissions.length})
-          </h3>
-          {submissions.map(s => (
-            <div key={s.id} style={styles.submissionRow}>
-              <span style={styles.playerName}>{s.playerName}</span>
-              <span style={styles.submissionText}>{s.text}</span>
-            </div>
-          ))}
-        </div>
+      {showResultsLive ? (
+        <div style={styles.columns}>
+          <div style={styles.column}>
+            <h3 style={styles.sectionLabel}>
+              Submitted ({submissions.length})
+            </h3>
+            {submissions.map(s => (
+              <div key={s.id} style={styles.submissionRow}>
+                {showNames && <span style={styles.playerName}>{s.playerName}</span>}
+                <span style={styles.submissionText}>{s.text}</span>
+              </div>
+            ))}
+          </div>
 
-        <div style={styles.column}>
-          <h3 style={styles.sectionLabel}>
-            Waiting on ({waitingOn.length})
-          </h3>
-          {waitingOn.map(p => (
-            <div key={p.id} style={styles.waitingRow}>
-              {p.name}
-            </div>
-          ))}
+          <div style={styles.column}>
+            <h3 style={styles.sectionLabel}>
+              Waiting on ({waitingOn.length})
+            </h3>
+            {showNames ? (
+              waitingOn.map(p => (
+                <div key={p.id} style={styles.waitingRow}>
+                  {p.name}
+                </div>
+              ))
+            ) : (
+              waitingOn.length > 0 && (
+                <div style={styles.waitingRow}>
+                  {waitingOn.length} player{waitingOn.length !== 1 ? 's' : ''}
+                </div>
+              )
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div style={styles.progressOnly}>
+          <p style={styles.progressCount}>
+            {submissions.length} of {players.length} submitted
+          </p>
+        </div>
+      )}
 
       <button
         onClick={closeSubmissions}
@@ -217,6 +236,15 @@ const styles = {
   },
   column: {
     flex: 1,
+  },
+  progressOnly: {
+    textAlign: 'center',
+    marginBottom: '2rem',
+    padding: '2rem',
+  },
+  progressCount: {
+    fontSize: '1.5rem',
+    color: '#aaa',
   },
   submissionRow: {
     display: 'flex',
