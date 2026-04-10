@@ -334,7 +334,7 @@ const styles = {
   },
   buttonRow: {
     display: 'flex',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
   },
   primaryButton: {
     padding: '0.75rem 2rem',
