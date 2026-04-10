@@ -13,6 +13,9 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
   const [reactions, setReactions] = useState({});
   const [currentIndex, setCurrentIndex] = useState(round.currentItemIndex || 0);
 
+  const showNames = round.showNames ?? true;
+  const showResultsLive = round.showResultsLive ?? true;
+
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, 'rooms', roomCode, 'rounds', roundId, 'reactions'),
@@ -31,6 +34,10 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
 
   const currentOption = round.options[currentIndex];
   const isLast = currentIndex >= round.options.length - 1;
+
+  const reactedCount = currentOption && reactions[currentOption.id]?.individual
+    ? Object.keys(reactions[currentOption.id].individual).length
+    : 0;
 
   async function nextItem() {
     const nextIndex = currentIndex + 1;
@@ -82,7 +89,7 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
       {currentOption && (
         <div style={styles.currentItem}>
           <p style={styles.currentText}>{currentOption.text}</p>
-          {currentOption.authorId && (
+          {showNames && currentOption.authorId && (
             <p style={styles.authorLabel}>
               {players.find(p => p.id === currentOption.authorId)?.name || ''}
             </p>
@@ -90,26 +97,26 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
         </div>
       )}
 
-      <div style={styles.liveReactions}>
-        {currentOption && reactions[currentOption.id] && (
-          <>
-            <span style={styles.countGreen}>
-              ✓ {reactions[currentOption.id]?.counts?.['✓'] || 0}
-            </span>
-            <span style={styles.countYellow}>
-              ! {reactions[currentOption.id]?.counts?.['!'] || 0}
-            </span>
-            <span style={styles.countRed}>
-              ✗ {reactions[currentOption.id]?.counts?.['✗'] || 0}
-            </span>
-          </>
-        )}
-      </div>
+      {showResultsLive ? (
+        <div style={styles.liveReactions}>
+          {currentOption && reactions[currentOption.id] && (
+            <>
+              <span style={styles.countGreen}>
+                ✓ {reactions[currentOption.id]?.counts?.['✓'] || 0}
+              </span>
+              <span style={styles.countYellow}>
+                ! {reactions[currentOption.id]?.counts?.['!'] || 0}
+              </span>
+              <span style={styles.countRed}>
+                ✗ {reactions[currentOption.id]?.counts?.['✗'] || 0}
+              </span>
+            </>
+          )}
+        </div>
+      ) : null}
+
       <div style={styles.reactedCount}>
-        {currentOption && reactions[currentOption.id]?.individual
-          ? Object.keys(reactions[currentOption.id].individual).length
-          : 0}
-        {' of '}{players.length} reacted
+        {reactedCount} of {players.length} reacted
       </div>
 
       <div style={styles.buttonRow}>
