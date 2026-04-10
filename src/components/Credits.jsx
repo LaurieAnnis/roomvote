@@ -3,15 +3,14 @@ import { db } from '../firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
 const SPEED_LABELS = ['▸', '▸▸', '▸▸▸'];
-const SPEED_VALUES = [40, 25, 12]; // pixels per second
+const SPEED_VALUES = [25, 50, 90]; // pixels per second — slowest to fastest
 
 export default function Credits({ sessionName, roomCode, rounds, players, onClose }) {
   const [roundData, setRoundData] = useState(null);
   const [highlights, setHighlights] = useState([]);
   const [scrollY, setScrollY] = useState(0);
   const [paused, setPaused] = useState(false);
-  const [speedIndex, setSpeedIndex] = useState(1);
-  const contentRef = useRef(null);
+  const [speedIndex, setSpeedIndex] = useState(0);
   const animRef = useRef(null);
   const lastTimeRef = useRef(null);
 
@@ -112,111 +111,112 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
   return (
     <div style={styles.viewport} onClick={togglePause}>
       {/* Scrolling content */}
-      <div
-        ref={contentRef}
-        style={{
-          ...styles.scrollContent,
-          transform: `translateY(${-scrollY}px)`,
-        }}
-      >
-        {/* Title card */}
-        <div style={styles.titleCard}>
-          <h1 style={styles.sessionTitle}>{sessionName}</h1>
-          <p style={styles.playerRoll}>
-            {players.map(p => p.name).join(' · ')}
-          </p>
-        </div>
+      <div style={styles.scrollWrapper}>
+        <div
+          style={{
+            ...styles.scrollContent,
+            transform: `translateY(${-scrollY}px)`,
+          }}
+        >
+          {/* Title card */}
+          <div style={styles.titleCard}>
+            <h1 style={styles.sessionTitle}>{sessionName}</h1>
+            <p style={styles.playerRoll}>
+              {players.map(p => p.name).join(' · ')}
+            </p>
+          </div>
 
-        {/* Round recaps */}
-        {roundData.map((round, i) => (
-          <div key={round.id} style={styles.roundSection}>
-            <div style={styles.roundHeader}>
-              <span style={styles.roundNumber}>Round {i + 1}</span>
-              <span style={styles.roundType}>{round.type}</span>
-            </div>
-            <h2 style={styles.roundPrompt}>{round.prompt}</h2>
-
-            {round.type === 'submit' && round.submissions && (
-              <div style={styles.resultsList}>
-                {round.submissions.map(s => (
-                  <div key={s.id} style={styles.creditRow}>
-                    <span style={styles.creditName}>{s.playerName}</span>
-                    <span style={styles.creditValue}>{s.text}</span>
-                  </div>
-                ))}
+          {/* Round recaps */}
+          {roundData.map((round, i) => (
+            <div key={round.id} style={styles.roundSection}>
+              <div style={styles.roundHeader}>
+                <span style={styles.roundNumber}>Round {i + 1}</span>
+                <span style={styles.roundType}>{round.type}</span>
               </div>
-            )}
+              <h2 style={styles.roundPrompt}>{round.prompt}</h2>
 
-            {round.type === 'react' && round.reactions && (
-              <div style={styles.resultsList}>
-                {round.options.map(opt => {
-                  const r = round.reactions[opt.id];
-                  const checks = r?.counts?.['✓'] || 0;
-                  const bangs = r?.counts?.['!'] || 0;
-                  const exes = r?.counts?.['✗'] || 0;
-                  return (
-                    <div key={opt.id} style={styles.creditRow}>
-                      <span style={styles.creditValue}>{opt.text}</span>
-                      <span style={styles.reactionSummary}>
-                        <span style={styles.countGreen}>✓{checks}</span>
-                        {' '}
-                        <span style={styles.countYellow}>!{bangs}</span>
-                        {' '}
-                        <span style={styles.countRed}>✗{exes}</span>
-                      </span>
+              {round.type === 'submit' && round.submissions && (
+                <div style={styles.resultsList}>
+                  {round.submissions.map(s => (
+                    <div key={s.id} style={styles.creditRow}>
+                      <span style={styles.creditName}>{s.playerName}</span>
+                      <span style={styles.creditValue}>{s.text}</span>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
 
-            {round.type === 'vote' && round.votes && (
-              <div style={styles.resultsList}>
-                {[...round.options]
-                  .sort((a, b) => {
-                    const aCount = Object.values(round.votes).filter(v => v === a.id).length;
-                    const bCount = Object.values(round.votes).filter(v => v === b.id).length;
-                    return bCount - aCount;
-                  })
-                  .map((opt, j) => {
-                    const count = Object.values(round.votes).filter(v => v === opt.id).length;
+              {round.type === 'react' && round.reactions && (
+                <div style={styles.resultsList}>
+                  {round.options.map(opt => {
+                    const r = round.reactions[opt.id];
+                    const checks = r?.counts?.['✓'] || 0;
+                    const bangs = r?.counts?.['!'] || 0;
+                    const exes = r?.counts?.['✗'] || 0;
                     return (
                       <div key={opt.id} style={styles.creditRow}>
-                        <span style={styles.rank}>#{j + 1}</span>
                         <span style={styles.creditValue}>{opt.text}</span>
-                        <span style={styles.voteCount}>{count} vote{count !== 1 ? 's' : ''}</span>
+                        <span style={styles.reactionSummary}>
+                          <span style={styles.countGreen}>✓{checks}</span>
+                          {' '}
+                          <span style={styles.countYellow}>!{bangs}</span>
+                          {' '}
+                          <span style={styles.countRed}>✗{exes}</span>
+                        </span>
                       </div>
                     );
                   })}
-              </div>
-            )}
-          </div>
-        ))}
+                </div>
+              )}
 
-        {/* Highlights */}
-        {highlights.length > 0 && (
-          <div style={styles.highlightsSection}>
-            <h2 style={styles.highlightsTitle}>Highlights</h2>
-            {highlights.map((h, i) => (
-              <div key={i} style={styles.highlightCard}>
-                <div style={styles.highlightLabel}>{h.label}</div>
-                <div style={styles.highlightValue}>{h.value}</div>
-                {h.detail && <div style={styles.highlightDetail}>{h.detail}</div>}
-              </div>
-            ))}
-          </div>
-        )}
+              {round.type === 'vote' && round.votes && (
+                <div style={styles.resultsList}>
+                  {[...round.options]
+                    .sort((a, b) => {
+                      const aCount = Object.values(round.votes).filter(v => v === a.id).length;
+                      const bCount = Object.values(round.votes).filter(v => v === b.id).length;
+                      return bCount - aCount;
+                    })
+                    .map((opt, j) => {
+                      const count = Object.values(round.votes).filter(v => v === opt.id).length;
+                      return (
+                        <div key={opt.id} style={styles.creditRow}>
+                          <span style={styles.rank}>#{j + 1}</span>
+                          <span style={styles.creditValue}>{opt.text}</span>
+                          <span style={styles.voteCount}>{count} vote{count !== 1 ? 's' : ''}</span>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          ))}
 
-        {/* End spacer so content scrolls fully off */}
-        <div style={styles.endSpacer}>
-          <p style={styles.endText}>Thanks for playing.</p>
+          {/* Highlights */}
+          {highlights.length > 0 && (
+            <div style={styles.highlightsSection}>
+              <h2 style={styles.highlightsTitle}>Highlights</h2>
+              {highlights.map((h, i) => (
+                <div key={i} style={styles.highlightCard}>
+                  <div style={styles.highlightLabel}>{h.label}</div>
+                  <div style={styles.highlightValue}>{h.value}</div>
+                  {h.detail && <div style={styles.highlightDetail}>{h.detail}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* End spacer so content scrolls fully off */}
+          <div style={styles.endSpacer}>
+            <p style={styles.endText}>Thanks for playing.</p>
+          </div>
         </div>
       </div>
 
       {/* Fixed controls */}
       <div style={styles.controls} onClick={e => e.stopPropagation()}>
         <button onClick={onClose} style={styles.controlButton}>
-          ✕ Close
+          ← Back to session
         </button>
         <button onClick={togglePause} style={styles.controlButton}>
           {paused ? '▶ Play' : '⏸ Pause'}
@@ -236,11 +236,9 @@ function generateHighlights(roundData, players) {
 
   // Submit rounds: most submissions across all submit rounds per player
   const submitCounts = {};
-  const allSubmissions = [];
   roundData.filter(r => r.type === 'submit').forEach(r => {
     (r.submissions || []).forEach(s => {
       submitCounts[s.playerName] = (submitCounts[s.playerName] || 0) + 1;
-      allSubmissions.push(s);
     });
   });
 
@@ -357,7 +355,7 @@ const styles = {
   viewport: {
     position: 'fixed',
     inset: 0,
-    background: '#0a0a0a',
+    background: '#16171d',
     overflow: 'hidden',
     cursor: 'pointer',
     zIndex: 1000,
@@ -365,7 +363,7 @@ const styles = {
   loading: {
     position: 'fixed',
     inset: 0,
-    background: '#0a0a0a',
+    background: '#16171d',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -373,11 +371,16 @@ const styles = {
     fontFamily: 'sans-serif',
     fontSize: '1.2rem',
   },
+  scrollWrapper: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
   scrollContent: {
     position: 'absolute',
     top: '100vh',
-    left: '50%',
-    transform: 'translateX(-50%)',
     width: '100%',
     maxWidth: '700px',
     padding: '0 2rem',
@@ -434,7 +437,7 @@ const styles = {
     alignItems: 'center',
     gap: '1rem',
     padding: '0.6rem 0',
-    borderBottom: '1px solid #1a1a1a',
+    borderBottom: '1px solid #2e303a',
   },
   creditName: {
     fontSize: '0.85rem',
@@ -463,7 +466,7 @@ const styles = {
   highlightsSection: {
     paddingTop: '3rem',
     paddingBottom: '3rem',
-    borderTop: '1px solid #333',
+    borderTop: '1px solid #2e303a',
   },
   highlightsTitle: {
     fontSize: '1.8rem',
