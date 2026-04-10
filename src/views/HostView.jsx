@@ -8,6 +8,7 @@ import { generateRoomCode } from '../utils/roomCode';
 import { SubmitRoundHost } from '../components/rounds/SubmitRound';
 import { ReactRoundHost } from '../components/rounds/ReactRound';
 import { VoteRoundHost } from '../components/rounds/VoteRound';
+import Credits from '../components/Credits';
 import QRCode from 'qrcode';
 
 const ROUND_TYPES = [
@@ -30,6 +31,7 @@ export default function HostView() {
   const [currentRoundId, setCurrentRoundId] = useState(null);
   const [currentRound, setCurrentRound] = useState(null);
   const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [showCredits, setShowCredits] = useState(false);
 
   // new round form
   const [newRoundType, setNewRoundType] = useState('submit');
@@ -37,6 +39,8 @@ export default function HostView() {
   const [newRoundTimer, setNewRoundTimer] = useState(180);
   const [newRoundOptions, setNewRoundOptions] = useState('');
   const [showNewRound, setShowNewRound] = useState(false);
+  const [newRoundShowNames, setNewRoundShowNames] = useState(false);
+  const [newRoundShowResultsLive, setNewRoundShowResultsLive] = useState(false);
 
   // Generate QR code when room is created
   useEffect(() => {
@@ -113,6 +117,8 @@ export default function HostView() {
       timerStartedAt: serverTimestamp(),
       currentItemIndex: 0,
       options,
+      showNames: newRoundShowNames,
+      showResultsLive: newRoundShowResultsLive,
       createdAt: serverTimestamp(),
     };
 
@@ -129,6 +135,8 @@ export default function HostView() {
     setNewRoundPrompt('');
     setNewRoundOptions('');
     setNewRoundTimer(DEFAULT_TIMERS[newRoundType]);
+    setNewRoundShowNames(false);
+    setNewRoundShowResultsLive(false);
     setShowNewRound(false);
   }
 
@@ -149,6 +157,8 @@ export default function HostView() {
             ...(opt.authorId ? { authorId: opt.authorId } : {}),
           }))
         : [],
+      showNames: currentRound.showNames ?? false,
+      showResultsLive: currentRound.showResultsLive ?? false,
       createdAt: serverTimestamp(),
     };
 
@@ -166,6 +176,22 @@ export default function HostView() {
   function handleTypeChange(type) {
     setNewRoundType(type);
     setNewRoundTimer(DEFAULT_TIMERS[type]);
+  }
+
+  const completedRounds = rounds.filter(r => r.status === 'complete');
+  const hasCompletedRounds = completedRounds.length > 0;
+  const noActiveRound = !currentRound || currentRound.status === 'complete';
+
+  if (showCredits) {
+    return (
+      <Credits
+        sessionName={sessionName}
+        roomCode={roomCode}
+        rounds={rounds}
+        players={players}
+        onClose={() => setShowCredits(false)}
+      />
+    );
   }
 
   if (!roomCode) {
@@ -270,16 +296,26 @@ export default function HostView() {
 
       <hr style={styles.divider} />
 
-      {/* New round */}
+      {/* New round / credits */}
       {(roomStatus === 'lobby' || roomStatus === 'reviewing') && (
         <div style={styles.section}>
           {!showNewRound ? (
-            <button
-              onClick={() => setShowNewRound(true)}
-              style={styles.secondaryButton}
-            >
-              + New Round
-            </button>
+            <div style={styles.bottomButtons}>
+              <button
+                onClick={() => setShowNewRound(true)}
+                style={styles.secondaryButton}
+              >
+                + New Round
+              </button>
+              {hasCompletedRounds && noActiveRound && (
+                <button
+                  onClick={() => setShowCredits(true)}
+                  style={styles.creditsButton}
+                >
+                  🎬 Roll Credits
+                </button>
+              )}
+            </div>
           ) : (
             <div style={styles.newRoundForm}>
               <h3 style={styles.sectionLabel}>New round</h3>
@@ -333,6 +369,28 @@ export default function HostView() {
                 onChange={e => setNewRoundTimer(Number(e.target.value))}
                 style={{ ...styles.input, width: '8rem' }}
               />
+
+              {/* Visibility toggles */}
+              <div style={styles.toggleSection}>
+                <label style={styles.toggleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={newRoundShowNames}
+                    onChange={e => setNewRoundShowNames(e.target.checked)}
+                    style={styles.checkbox}
+                  />
+                  Show player names on screen
+                </label>
+                <label style={styles.toggleLabel}>
+                  <input
+                    type="checkbox"
+                    checked={newRoundShowResultsLive}
+                    onChange={e => setNewRoundShowResultsLive(e.target.checked)}
+                    style={styles.checkbox}
+                  />
+                  Show results as they come in
+                </label>
+              </div>
 
               <div style={styles.formButtons}>
                 <button
@@ -451,6 +509,11 @@ const styles = {
     borderRadius: '8px',
     cursor: 'pointer',
   },
+  bottomButtons: {
+    display: 'flex',
+    gap: '1rem',
+    flexWrap: 'wrap',
+  },
   newRoundForm: {
     display: 'flex',
     flexDirection: 'column',
@@ -497,6 +560,29 @@ const styles = {
     width: '100%',
     boxSizing: 'border-box',
   },
+  toggleSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+    padding: '1rem',
+    border: '1px solid #333',
+    borderRadius: '8px',
+    marginTop: '0.25rem',
+  },
+  toggleLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    fontSize: '0.9rem',
+    color: '#ccc',
+    cursor: 'pointer',
+  },
+  checkbox: {
+    width: '18px',
+    height: '18px',
+    accentColor: '#4caf50',
+    cursor: 'pointer',
+  },
   formButtons: {
     display: 'flex',
     gap: '1rem',
@@ -518,6 +604,15 @@ const styles = {
     background: 'transparent',
     color: '#4caf50',
     border: '2px solid #4caf50',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+  creditsButton: {
+    padding: '0.75rem 2rem',
+    fontSize: '1rem',
+    background: 'transparent',
+    color: '#ff9800',
+    border: '2px solid #ff9800',
     borderRadius: '8px',
     cursor: 'pointer',
   },
