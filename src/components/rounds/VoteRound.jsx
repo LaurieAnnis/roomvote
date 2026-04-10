@@ -12,6 +12,9 @@ import Heatmap from '../Heatmap';
 export function VoteRoundHost({ roomCode, round, roundId, players, sessionName }) {
   const [votes, setVotes] = useState({});
 
+  const showNames = round.showNames ?? true;
+  const showResultsLive = round.showResultsLive ?? true;
+
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, 'rooms', roomCode, 'rounds', roundId, 'votes'),
@@ -40,7 +43,6 @@ export function VoteRoundHost({ roomCode, round, roundId, players, sessionName }
       status: 'reviewing',
     });
 
-    // log to sheets
     const { logRoundToSheet } = await import('../../utils/sheets');
     await logRoundToSheet(sessionName, roomCode, round, [], {}, votes, players);
   }
@@ -80,14 +82,16 @@ export function VoteRoundHost({ roomCode, round, roundId, players, sessionName }
         {votedCount} / {totalCount} voted
       </p>
 
-      <div style={styles.optionList}>
-        {round.options.map(o => (
-          <div key={o.id} style={styles.optionRow}>
-            <span style={styles.optionText}>{o.text}</span>
-            <span style={styles.voteCount}>{voteCounts[o.id] || 0}</span>
-          </div>
-        ))}
-      </div>
+      {showResultsLive && (
+        <div style={styles.optionList}>
+          {round.options.map(o => (
+            <div key={o.id} style={styles.optionRow}>
+              <span style={styles.optionText}>{o.text}</span>
+              <span style={styles.voteCount}>{voteCounts[o.id] || 0}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <button
         onClick={revealVotes}
