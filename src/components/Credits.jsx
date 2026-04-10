@@ -13,6 +13,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
   const [speedIndex, setSpeedIndex] = useState(0);
   const animRef = useRef(null);
   const lastTimeRef = useRef(null);
+  const contentRef = useRef(null);
 
   const completedRounds = rounds
     .filter(r => r.status === 'complete')
@@ -82,7 +83,16 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      setScrollY(prev => prev + SPEED_VALUES[speedIndex] * delta);
+      setScrollY(prev => {
+        const next = prev + SPEED_VALUES[speedIndex] * delta;
+        // Loop: if scrolled past all content + one viewport height, restart
+        const contentHeight = contentRef.current?.offsetHeight || 0;
+        const viewportHeight = window.innerHeight;
+        if (contentHeight > 0 && next > contentHeight + viewportHeight) {
+          return 0;
+        }
+        return next;
+      });
       animRef.current = requestAnimationFrame(tick);
     }
 
@@ -113,6 +123,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       {/* Scrolling content */}
       <div style={styles.scrollWrapper}>
         <div
+          ref={contentRef}
           style={{
             ...styles.scrollContent,
             transform: `translateY(${-scrollY}px)`,
