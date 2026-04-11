@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { db } from '../firebase';
+import { db, auth, googleProvider } from '../firebase';
 import {
   doc, setDoc, updateDoc, onSnapshot,
   collection, addDoc, serverTimestamp,
   getDocs, deleteDoc, writeBatch
 } from 'firebase/firestore';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { generateRoomCode } from '../utils/roomCode';
 import { SubmitRoundHost } from '../components/rounds/SubmitRound';
 import { ReactRoundHost } from '../components/rounds/ReactRound';
@@ -22,7 +23,121 @@ const DEFAULT_TIMERS = { submit: 180, react: 30, vote: 60 };
 
 const BASE_URL = 'https://roomvote-2026.web.app';
 
+// Add allowed host emails here. Only these accounts can access the host view.
+// Set to null to allow any Google account.
+const ALLOWED_HOST_EMAILS = [
+  // 'your-email@gmail.com',
+];
+
 export default function HostView() {
+  const [user, setUser] = useState(undefined); // undefined = loading, null = signed out
+  const [authError, setAuthError] = useState(null);
+
+  const [roomCode, setRoomCode] = useState(null);
+  const [sessionName, setSessionName] = useState('');
+  const [sessionNameInput, setSessionNameInput] = useState('');
+  const [roomStatus, setRoomStatus] = useState('lobby');
+  const [players, setPlayers] = useState([]);
+  const [rounds, setRounds] = useState([]);
+  const [currentRoundId, setCurrentRoundId] = useState(null);
+  const [currentRound, setCurrentRound] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [showCredits, setShowCredits] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // new round form
+  const [newRoundType, setNewRoundType] = useState('submit');
+  const [newRoundPrompt, setNewRoundPrompt] = useState('');
+  const [newRoundTimer, setNewRoundTimer] = useState(180);
+  const [newRoundOptions, setNewRoundOptions] = useState('');
+  const [showNewRound, setShowNewRound] = useState(false);
+  const [newRoundShowNames, setNewRoundShowNames] = useState(false);
+  const [newRoundShowResultsLive, setNewRoundShowResultsLive] = useState(false);
+
+  // ── Auth listener ──────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser && ALLOWED_HOST_EMAILS.length > 0) {
+        if (!ALLOWED_HOST_EMAILS.includes(firebaseUser.email)) {
+          signOut(auth);
+          setAuthError(`${firebaseUser.email} is not an authorized host.`);
+          setUser(null);
+          return;
+        }
+      }
+      setAuthError(null);
+      setUser(firebaseUser);
+    });
+    return () => unsub();
+  }, []);
+
+  async function handleSignIn() {
+    try {
+      setAuthError(null);
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      if (err.code !== 'auth/popup-closed-by-user') {
+        setAuthError('Sign-in failed. Try again.');
+        console.error('Auth error:', err);
+      }
+    }
+  }
+
+  async function handleSignOut() {
+    await signOut(auth);
+    // Reset session state so a different host doesn't inherit the UI
+    setRoomCode(null);
+    setSessionName('');
+    setSessionNameInput('');
+    setRoomStatus('lobby');
+    setPlayers([]);
+    setRounds([]);
+    setCurrentRoundId(null);
+    setCurrentRound(null);
+    setQrDataUrl(null);
+  }
+
+  // ── Auth gate ──────────────────────────────────────────────────────────────
+
+  if (user === undefined) {
+    return (
+      <div style={styles.centered}>
+        <p style={{ color: '#888' }}>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div style={styles.centered}>
+        <h2>Host Sign In</h2>
+        <p style={{ color: '#aaa', marginBottom: '1.5rem' }}>
+          Sign in with Google to host a session.
+        </p>
+        <button onClick={handleSignIn} style={styles.primaryButton}>
+          Sign in with Google
+        </button>
+        {authError && (
+          <p style={{ color: '#f44336', marginTop: '1rem', fontSize: '0.9rem' }}>
+            {authError}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Everything below here is the original HostView, now behind auth ───────
+
+  return <HostViewAuthed user={user} onSignOut={handleSignOut} />;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Authenticated host view (extracted to keep the auth gate clean)
+// ════════════════════════════════════════════════════════════════════════════
+
+function HostViewAuthed({ user, onSignOut }) {
   const [roomCode, setRoomCode] = useState(null);
   const [sessionName, setSessionName] = useState('');
   const [sessionNameInput, setSessionNameInput] = useState('');
@@ -63,6 +178,7 @@ export default function HostView() {
       sessionName: sessionNameInput.trim(),
       status: 'lobby',
       currentRoundId: null,
+      hostUid: user.uid,
       createdAt: serverTimestamp(),
     });
     setRoomCode(code);
@@ -179,7 +295,6 @@ export default function HostView() {
   async function deleteSession() {
     setDeleting(true);
     try {
-      // Delete each round's subcollections (submissions, reactions, votes), then the round doc
       const roundsSnap = await getDocs(collection(db, 'rooms', roomCode, 'rounds'));
       for (const roundDoc of roundsSnap.docs) {
         const roundRef = roundDoc.ref;
@@ -193,16 +308,13 @@ export default function HostView() {
         await deleteDoc(roundRef);
       }
 
-      // Delete players
       const playersSnap = await getDocs(collection(db, 'rooms', roomCode, 'players'));
       const playerBatch = writeBatch(db);
       playersSnap.docs.forEach(d => playerBatch.delete(d.ref));
       if (playersSnap.docs.length > 0) await playerBatch.commit();
 
-      // Delete the room doc itself
       await deleteDoc(doc(db, 'rooms', roomCode));
 
-      // Reset local state back to the create-room screen
       setRoomCode(null);
       setSessionName('');
       setSessionNameInput('');
@@ -245,6 +357,10 @@ export default function HostView() {
   if (!roomCode) {
     return (
       <div style={styles.centered}>
+        <div style={styles.authBar}>
+          <span style={styles.authEmail}>{user.email}</span>
+          <button onClick={onSignOut} style={styles.signOutButton}>Sign out</button>
+        </div>
         <h2>New Session</h2>
         <input
           value={sessionNameInput}
@@ -266,6 +382,12 @@ export default function HostView() {
 
   return (
     <div style={styles.container}>
+
+      {/* Auth bar */}
+      <div style={styles.authBar}>
+        <span style={styles.authEmail}>{user.email}</span>
+        <button onClick={onSignOut} style={styles.signOutButton}>Sign out</button>
+      </div>
 
       {/* Header */}
       <div style={styles.header}>
@@ -526,6 +648,26 @@ const styles = {
     marginTop: '20vh',
     fontFamily: 'sans-serif',
     padding: '1rem',
+  },
+  authBar: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: '0.75rem',
+    marginBottom: '1rem',
+    fontSize: '0.85rem',
+  },
+  authEmail: {
+    color: '#888',
+  },
+  signOutButton: {
+    padding: '0.3rem 0.75rem',
+    fontSize: '0.8rem',
+    background: 'transparent',
+    color: '#888',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    cursor: 'pointer',
   },
   header: {
     textAlign: 'center',
