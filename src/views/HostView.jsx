@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import {
   doc, setDoc, updateDoc, onSnapshot,
-  collection, addDoc, serverTimestamp
+  collection, addDoc, serverTimestamp,
+  getDocs, deleteDoc, writeBatch
 } from 'firebase/firestore';
 import { generateRoomCode } from '../utils/roomCode';
 import { SubmitRoundHost } from '../components/rounds/SubmitRound';
@@ -32,6 +33,8 @@ export default function HostView() {
   const [currentRound, setCurrentRound] = useState(null);
   const [qrDataUrl, setQrDataUrl] = useState(null);
   const [showCredits, setShowCredits] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // new round form
   const [newRoundType, setNewRoundType] = useState('submit');
@@ -171,6 +174,51 @@ export default function HostView() {
       currentRoundId: roundRef.id,
       status: 'active',
     });
+  }
+
+  async function deleteSession() {
+    setDeleting(true);
+    try {
+      // Delete each round's subcollections (submissions, reactions, votes), then the round doc
+      const roundsSnap = await getDocs(collection(db, 'rooms', roomCode, 'rounds'));
+      for (const roundDoc of roundsSnap.docs) {
+        const roundRef = roundDoc.ref;
+        const subcollections = ['submissions', 'reactions', 'votes'];
+        for (const sub of subcollections) {
+          const subSnap = await getDocs(collection(roundRef, sub));
+          const batch = writeBatch(db);
+          subSnap.docs.forEach(d => batch.delete(d.ref));
+          if (subSnap.docs.length > 0) await batch.commit();
+        }
+        await deleteDoc(roundRef);
+      }
+
+      // Delete players
+      const playersSnap = await getDocs(collection(db, 'rooms', roomCode, 'players'));
+      const playerBatch = writeBatch(db);
+      playersSnap.docs.forEach(d => playerBatch.delete(d.ref));
+      if (playersSnap.docs.length > 0) await playerBatch.commit();
+
+      // Delete the room doc itself
+      await deleteDoc(doc(db, 'rooms', roomCode));
+
+      // Reset local state back to the create-room screen
+      setRoomCode(null);
+      setSessionName('');
+      setSessionNameInput('');
+      setRoomStatus('lobby');
+      setPlayers([]);
+      setRounds([]);
+      setCurrentRoundId(null);
+      setCurrentRound(null);
+      setQrDataUrl(null);
+      setShowDeleteConfirm(false);
+    } catch (err) {
+      console.error('Delete session failed:', err);
+      alert('Delete failed — check the console. Firestore rules may need to allow deletes.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function handleTypeChange(type) {
@@ -414,6 +462,51 @@ export default function HostView() {
           )}
         </div>
       )}
+
+      {/* Delete session */}
+      <hr style={styles.divider} />
+      <div style={styles.deleteSection}>
+        <button
+          onClick={() => setShowDeleteConfirm(true)}
+          style={styles.deleteButton}
+        >
+          🗑 Delete Session
+        </button>
+      </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div style={styles.modalOverlay} onClick={() => !deleting && setShowDeleteConfirm(false)}>
+          <div style={styles.modal} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 1rem 0' }}>Delete this session?</h3>
+            <p style={{ color: '#ccc', margin: '0 0 0.5rem 0' }}>
+              This will permanently delete room <strong>{roomCode}</strong> and all its data from Firestore.
+            </p>
+            <p style={{ color: '#888', margin: '0 0 1.5rem 0', fontSize: '0.85rem' }}>
+              Google Sheets data is not affected.
+            </p>
+            <div style={styles.modalButtons}>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                style={styles.cancelButton}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteSession}
+                disabled={deleting}
+                style={{
+                  ...styles.deleteConfirmButton,
+                  opacity: deleting ? 0.5 : 1,
+                }}
+              >
+                {deleting ? 'Deleting...' : 'Yes, delete it'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -626,6 +719,54 @@ const styles = {
     background: 'transparent',
     color: '#888',
     border: '2px solid #444',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+  deleteSection: {
+    display: 'flex',
+    justifyContent: 'center',
+    marginBottom: '2rem',
+  },
+  deleteButton: {
+    padding: '0.6rem 1.5rem',
+    fontSize: '0.85rem',
+    background: 'transparent',
+    color: '#f44336',
+    border: '2px solid #f44336',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0, 0, 0, 0.7)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  modal: {
+    background: '#1e1e1e',
+    border: '2px solid #444',
+    borderRadius: '12px',
+    padding: '2rem',
+    maxWidth: '400px',
+    width: '90%',
+  },
+  modalButtons: {
+    display: 'flex',
+    gap: '1rem',
+    justifyContent: 'flex-end',
+  },
+  deleteConfirmButton: {
+    padding: '0.75rem 2rem',
+    fontSize: '1rem',
+    background: '#f44336',
+    color: '#fff',
+    border: 'none',
     borderRadius: '8px',
     cursor: 'pointer',
   },
