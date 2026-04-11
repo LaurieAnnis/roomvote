@@ -1,3 +1,5 @@
+import { auth } from '../firebase';
+
 const SHEETS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwRzvvfrGx4n9UG4ityzPU78bkoizb-VBZTZLhETDtM8UyUBus42TnihHGXYLpQgE4S/exec';
 
 export async function logRoundToSheet(sessionName, roomCode, round, submissions, reactions, votes, players) {
@@ -83,12 +85,22 @@ export async function logRoundToSheet(sessionName, roomCode, round, submissions,
 
   if (rows.length === 0) return;
 
+  // Get the host's Firebase ID token for server-side verification
+  let idToken = null;
+  if (auth.currentUser) {
+    try {
+      idToken = await auth.currentUser.getIdToken();
+    } catch (err) {
+      console.error('Failed to get ID token:', err);
+    }
+  }
+
   try {
     await fetch(SHEETS_WEBHOOK_URL, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows }),
+      body: JSON.stringify({ rows, idToken }),
     });
   } catch (err) {
     console.error('Sheet log failed:', err);
