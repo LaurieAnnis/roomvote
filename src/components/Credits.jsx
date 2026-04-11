@@ -245,26 +245,6 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
 function generateHighlights(roundData, players) {
   const highlights = [];
 
-  // Submit rounds: most submissions across all submit rounds per player
-  const submitCounts = {};
-  roundData.filter(r => r.type === 'submit').forEach(r => {
-    (r.submissions || []).forEach(s => {
-      submitCounts[s.playerName] = (submitCounts[s.playerName] || 0) + 1;
-    });
-  });
-
-  if (Object.keys(submitCounts).length > 0) {
-    const topSubmitter = Object.entries(submitCounts)
-      .sort((a, b) => b[1] - a[1])[0];
-    if (topSubmitter[1] > 1) {
-      highlights.push({
-        label: 'Most Prolific',
-        value: topSubmitter[0],
-        detail: `${topSubmitter[1]} submissions`,
-      });
-    }
-  }
-
   // React rounds: item with most checkmarks
   let bestChecks = { text: '', count: 0 };
   roundData.filter(r => r.type === 'react').forEach(r => {
@@ -316,44 +296,6 @@ function generateHighlights(roundData, players) {
       label: 'Top Vote-Getter',
       value: topVoted.text,
       detail: `${topVoted.count} vote${topVoted.count !== 1 ? 's' : ''}`,
-    });
-  }
-
-  // Most active player overall (submissions + votes + reactions)
-  const activity = {};
-  roundData.forEach(r => {
-    if (r.type === 'submit') {
-      (r.submissions || []).forEach(s => {
-        activity[s.playerName] = (activity[s.playerName] || 0) + 1;
-      });
-    }
-    if (r.type === 'vote') {
-      Object.keys(r.votes || {}).forEach(playerId => {
-        const player = players.find(p => p.id === playerId);
-        if (player) {
-          activity[player.name] = (activity[player.name] || 0) + 1;
-        }
-      });
-    }
-    if (r.type === 'react') {
-      Object.values(r.reactions || {}).forEach(reaction => {
-        Object.keys(reaction.individual || {}).forEach(playerId => {
-          const player = players.find(p => p.id === playerId);
-          if (player) {
-            activity[player.name] = (activity[player.name] || 0) + 1;
-          }
-        });
-      });
-    }
-  });
-
-  if (Object.keys(activity).length > 0) {
-    const topActive = Object.entries(activity)
-      .sort((a, b) => b[1] - a[1])[0];
-    highlights.push({
-      label: 'Most Active',
-      value: topActive[0],
-      detail: `${topActive[1]} total actions`,
     });
   }
 
