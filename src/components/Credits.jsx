@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
 const SPEED_LABELS = ['▸', '▸▸', '▸▸▸'];
 const SPEED_VALUES = [25, 50, 90]; // pixels per second — slowest to fastest
+const RESUME_DELAY = 2000; // ms after last manual scroll before auto-scroll resumes
 
 export default function Credits({ sessionName, roomCode, rounds, players, onClose }) {
   const [roundData, setRoundData] = useState(null);
@@ -14,6 +15,8 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
   const animRef = useRef(null);
   const lastTimeRef = useRef(null);
   const contentRef = useRef(null);
+  const manualScrolling = useRef(false);
+  const resumeTimer = useRef(null);
 
   const completedRounds = rounds
     .filter(r => r.status === 'complete')
@@ -68,6 +71,63 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
     fetchAll();
   }, [completedRounds.length]);
 
+  // Handle manual scroll (wheel + touch)
+  const handleManualScroll = useCallback((deltaY) => {
+    manualScrolling.current = true;
+
+    // Clear any pending resume timer
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+
+    setScrollY(prev => {
+      const contentHeight = contentRef.current?.offsetHeight || 0;
+      const maxScroll = contentHeight + window.innerHeight;
+      const next = prev + deltaY;
+      // Clamp: don't scroll above start or past end
+      return Math.max(0, Math.min(next, maxScroll));
+    });
+
+    // Resume auto-scroll after idle (unless manually paused)
+    resumeTimer.current = setTimeout(() => {
+      manualScrolling.current = false;
+    }, RESUME_DELAY);
+  }, []);
+
+  useEffect(() => {
+    function onWheel(e) {
+      e.preventDefault();
+      handleManualScroll(e.deltaY);
+    }
+
+    let touchStartY = null;
+    function onTouchStart(e) {
+      touchStartY = e.touches[0].clientY;
+    }
+    function onTouchMove(e) {
+      if (touchStartY === null) return;
+      e.preventDefault();
+      const touchY = e.touches[0].clientY;
+      const delta = touchStartY - touchY;
+      touchStartY = touchY;
+      handleManualScroll(delta);
+    }
+    function onTouchEnd() {
+      touchStartY = null;
+    }
+
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    };
+  }, [handleManualScroll]);
+
   // Auto-scroll animation
   useEffect(() => {
     if (paused || !roundData) return;
@@ -83,16 +143,19 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      setScrollY(prev => {
-        const next = prev + SPEED_VALUES[speedIndex] * delta;
-        // Loop: if scrolled past all content + one viewport height, restart
-        const contentHeight = contentRef.current?.offsetHeight || 0;
-        const viewportHeight = window.innerHeight;
-        if (contentHeight > 0 && next > contentHeight + viewportHeight) {
-          return 0;
-        }
-        return next;
-      });
+      // Skip auto-scroll ticks while user is manually scrolling
+      if (!manualScrolling.current) {
+        setScrollY(prev => {
+          const next = prev + SPEED_VALUES[speedIndex] * delta;
+          const contentHeight = contentRef.current?.offsetHeight || 0;
+          const viewportHeight = window.innerHeight;
+          if (contentHeight > 0 && next > contentHeight + viewportHeight) {
+            return 0;
+          }
+          return next;
+        });
+      }
+
       animRef.current = requestAnimationFrame(tick);
     }
 
@@ -119,7 +182,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
   }
 
   return (
-    <div style={styles.viewport} onClick={togglePause}>
+    <div style={styles.viewport}>
       {/* Scrolling content */}
       <div style={styles.scrollWrapper}>
         <div
@@ -225,7 +288,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       </div>
 
       {/* Fixed controls */}
-      <div style={styles.controls} onClick={e => e.stopPropagation()}>
+      <div style={styles.controls}>
         <button onClick={onClose} style={styles.controlButton}>
           ← Back to session
         </button>
@@ -310,7 +373,6 @@ const styles = {
     inset: 0,
     background: '#16171d',
     overflow: 'hidden',
-    cursor: 'pointer',
     zIndex: 1000,
   },
   loading: {
