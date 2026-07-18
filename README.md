@@ -1,16 +1,84 @@
-# React + Vite
+# RoomVote
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A browser-based, real-time classroom voting app built for AME 494 Indie Game Studio at ASU. Jackbox-style: host runs a session on a projected room screen, students join on their phones with a room code or QR code, no app install and no student accounts.
 
-Currently, two official plugins are available:
+**Live app:** https://roomvote-2026.web.app
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## What it does
 
-## React Compiler
+The host creates a room and runs a sequence of rounds. Three round types:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Submit** -- free-text entry with a timer
+- **React** -- items shown one at a time, students react privately with ✓ / ! / ✗, results shown as a bar chart sorted by ✓ count
+- **Vote** -- multiple choice, hidden results until the host reveals them
 
-## Expanding the ESLint configuration
+Per-round visibility toggles control whether player names and live results show on the room screen. All data -- names, responses, timestamps -- logs to a Google Sheet once per round regardless of what's visible on screen, so the sheet is always the full record.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Only the host authenticates (Google sign-in via Firebase Auth). Students join anonymously with just a name and room code.
+
+## Tech stack
+
+- **Frontend:** Vite + React (plain JS, not TypeScript)
+- **Backend:** Firebase Firestore (real-time listeners), Firebase Auth (Google sign-in, host only)
+- **Hosting:** Firebase Hosting
+- **Results logging:** Google Sheets via an Apps Script webhook
+- **QR codes:** `qrcode` npm package
+
+## Getting started
+
+```bash
+npm install
+npm run dev
+```
+
+Runs a local dev server at `http://localhost:5173`.
+
+You'll need a `src/firebase.js` with your own Firebase project config (Firestore + Auth enabled) to connect to a live backend. This file is not committed -- see Firebase Setup below.
+
+## Project structure
+
+```
+src/
+  firebase.js         Firebase config, Firestore export, Auth export
+  App.jsx             Root component, routes to HostView or PlayerView
+  utils/               Room code generation, timer hook, Sheets webhook caller
+  views/
+    HostView.jsx       Host session management
+    PlayerView.jsx     Join flow and round participation
+  components/
+    rounds/            Submit, React, and Vote round components (host + player views)
+```
+
+Full data model and security rule details are documented separately, not in this README.
+
+## Deployment
+
+Dev workflow: edit locally or on GitHub, pull, build, deploy.
+
+```bash
+git pull
+npm run build
+firebase deploy --only hosting
+```
+
+Firestore rules only:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+Firebase Hosting is configured with cache-busting: `index.html` is no-cache, hashed assets are immutable.
+
+## Firebase setup
+
+This repo does not include Firebase credentials. To run your own instance, you'll need a Firebase project with Firestore and Google Auth enabled, a `src/firebase.js` with your own config, and a Google Sheets Apps Script webhook wired up in `src/utils/sheets.js`. Ask Laurie if you need the setup walkthrough.
+
+## Known limitations
+
+- No offline persistence -- a dropped connection mid-action fails silently rather than queuing. Verified low-risk for typical classroom wifi at the scale this was built for (roughly 30 concurrent students); not stress-tested beyond that.
+- No session expiration or automatic cleanup -- old rooms persist in Firestore until manually deleted from the host view or the Firebase console.
+- No host UI for editing a round after creation -- use Redo Round to rerun with the same config.
+
+## Author
+
+Built by Laurie Annis for AME 494 Indie Game Studio, ASU Herberger Institute, The GAME School.
