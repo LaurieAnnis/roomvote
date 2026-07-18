@@ -49,8 +49,6 @@ src/
     rounds/            Submit, React, and Vote round components (host + player views)
 ```
 
-Full data model and security rule details are documented separately, not in this README.
-
 ## Deployment
 
 Dev workflow: edit locally or on GitHub, pull, build, deploy.
