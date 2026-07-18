@@ -71,12 +71,6 @@ Firebase Hosting is configured with cache-busting: `index.html` is no-cache, has
 
 This repo does not include Firebase credentials. To run your own instance, you'll need a Firebase project with Firestore and Google Auth enabled, a `src/firebase.js` with your own config, and a Google Sheets Apps Script webhook wired up in `src/utils/sheets.js`. Ask Laurie if you need the setup walkthrough.
 
-## Known limitations
-
-- No offline persistence -- a dropped connection mid-action fails silently rather than queuing. Verified low-risk for typical classroom wifi at the scale this was built for (roughly 30 concurrent students); not stress-tested beyond that.
-- No session expiration or automatic cleanup -- old rooms persist in Firestore until manually deleted from the host view or the Firebase console.
-- No host UI for editing a round after creation -- use Redo Round to rerun with the same config.
-
 ## Author
 
 Built by Laurie Annis for AME 494 Indie Game Studio, ASU Herberger Institute, The GAME School.
