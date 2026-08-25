@@ -410,11 +410,12 @@ function HostViewAuthed({ user, onSignOut }) {
 
       <hr style={styles.divider} />
 
-      {/* Active round */}
+            {/* Active round */}
       {currentRound && (
         <div style={styles.section}>
           {currentRound.type === 'submit' && (
             <SubmitRoundHost
+              key={currentRoundId}
               roomCode={roomCode}
               round={currentRound}
               roundId={currentRoundId}
@@ -424,6 +425,7 @@ function HostViewAuthed({ user, onSignOut }) {
           )}
           {currentRound.type === 'react' && (
             <ReactRoundHost
+              key={currentRoundId}
               roomCode={roomCode}
               round={currentRound}
               roundId={currentRoundId}
@@ -433,6 +435,7 @@ function HostViewAuthed({ user, onSignOut }) {
           )}
           {currentRound.type === 'vote' && (
             <VoteRoundHost
+              key={currentRoundId}
               roomCode={roomCode}
               round={currentRound}
               roundId={currentRoundId}
