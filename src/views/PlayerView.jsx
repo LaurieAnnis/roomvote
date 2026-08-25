@@ -147,6 +147,7 @@ export default function PlayerView() {
     <div>
       {currentRound.type === 'submit' && (
         <SubmitRoundPlayer
+          key={currentRound.id}
           roomCode={joinedCode}
           round={currentRound}
           roundId={currentRound.id}
@@ -156,6 +157,7 @@ export default function PlayerView() {
       )}
       {currentRound.type === 'react' && (
         <ReactRoundPlayer
+          key={currentRound.id}
           roomCode={joinedCode}
           round={currentRound}
           roundId={currentRound.id}
@@ -165,6 +167,7 @@ export default function PlayerView() {
       )}
       {currentRound.type === 'vote' && (
         <VoteRoundPlayer
+          key={currentRound.id}
           roomCode={joinedCode}
           round={currentRound}
           roundId={currentRound.id}
