@@ -1,17 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase';
 import {
-  doc, setDoc, updateDoc, onSnapshot,
+  doc, updateDoc, onSnapshot,
   collection, serverTimestamp
 } from 'firebase/firestore';
 import Timer from '../Timer';
 import Heatmap from '../Heatmap';
+import { normalizeReactionSnapshot, writeReaction } from '../../utils/reactions';
 
 // ─── Host ────────────────────────────────────────────────────────────────────
 
 export function ReactRoundHost({ roomCode, round, roundId, players, sessionName }) {
   const [reactions, setReactions] = useState({});
   const [currentIndex, setCurrentIndex] = useState(round.currentItemIndex || 0);
+  const [advancing, setAdvancing] = useState(false);
 
   const showNames = round.showNames ?? true;
   const showResultsLive = round.showResultsLive ?? true;
@@ -19,11 +21,8 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, 'rooms', roomCode, 'rounds', roundId, 'reactions'),
-      snap => {
-        const r = {};
-        snap.docs.forEach(d => { r[d.id] = d.data(); });
-        setReactions(r);
-      }
+      snap => setReactions(normalizeReactionSnapshot(snap)),
+      err => console.error('Reactions listener failed:', err)
     );
     return () => unsub();
   }, [roomCode, roundId]);
@@ -40,12 +39,18 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
     : 0;
 
   async function nextItem() {
+    if (advancing) return;
     const nextIndex = currentIndex + 1;
-    await updateDoc(doc(db, 'rooms', roomCode, 'rounds', roundId), {
-      currentItemIndex: nextIndex,
-      timerStartedAt: serverTimestamp(),
-    });
-    setCurrentIndex(nextIndex);
+    setAdvancing(true);
+    try {
+      await updateDoc(doc(db, 'rooms', roomCode, 'rounds', roundId), {
+        currentItemIndex: nextIndex,
+        timerStartedAt: serverTimestamp(),
+      });
+      setCurrentIndex(nextIndex);
+    } finally {
+      setAdvancing(false);
+    }
   }
 
   async function revealHeatmap() {
@@ -121,7 +126,7 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
 
       <div style={styles.buttonRow}>
         {!isLast ? (
-          <button onClick={nextItem} style={styles.primaryButton}>
+          <button onClick={nextItem} disabled={advancing} style={styles.primaryButton}>
             Next →
           </button>
         ) : (
@@ -136,58 +141,59 @@ export function ReactRoundHost({ roomCode, round, roundId, players, sessionName 
 
 // ─── Player ──────────────────────────────────────────────────────────────────
 
-export function ReactRoundPlayer({ roomCode, round, roundId, playerId, playerName }) {
-  const [currentIndex, setCurrentIndex] = useState(round.currentItemIndex || 0);
+export function ReactRoundPlayer({ roomCode, round, roundId, playerId }) {
   const [myReactions, setMyReactions] = useState({});
-  const [roundStatus, setRoundStatus] = useState(round.status);
+  const [serverReaction, setServerReaction] = useState({ optionId: null, symbol: null });
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState({ optionId: null, message: null });
+  const sendingRef = useRef(false);
 
+  const currentIndex = round.currentItemIndex || 0;
+  const roundStatus = round.status;
+  const currentOption = round.options[currentIndex];
+  const currentOptionId = currentOption?.id;
+  const myReactionForCurrent = currentOptionId
+    ? myReactions[currentOptionId]
+      || (serverReaction.optionId === currentOptionId ? serverReaction.symbol : null)
+    : null;
+  const errorForCurrent = error.optionId === currentOptionId ? error.message : null;
+
+  // Watch this item's reaction doc so a reloaded phone knows it already
+  // reacted, instead of offering the buttons again.
   useEffect(() => {
+    if (!currentOptionId) return;
     const unsub = onSnapshot(
-      doc(db, 'rooms', roomCode, 'rounds', roundId),
-      snap => {
-        const data = snap.data();
-        if (!data) return;
-        setCurrentIndex(data.currentItemIndex || 0);
-        setRoundStatus(data.status);
-      }
+      doc(db, 'rooms', roomCode, 'rounds', roundId, 'reactions', currentOptionId),
+      snap => setServerReaction({
+        optionId: currentOptionId,
+        symbol: snap.data()?.individual?.[playerId] || null,
+      }),
+      err => console.error('Reaction listener failed:', err)
     );
     return () => unsub();
-  }, [roomCode, roundId]);
+  }, [roomCode, roundId, currentOptionId, playerId]);
 
   async function react(symbol) {
-    const currentOption = round.options[currentIndex];
-    if (!currentOption) return;
-    if (myReactions[currentOption.id]) return;
+    if (!currentOption || sendingRef.current) return;
+    if (myReactionForCurrent) return;
 
-    const reactionRef = doc(
-      db, 'rooms', roomCode, 'rounds', roundId, 'reactions', currentOption.id
-    );
+    const optionId = currentOption.id;
+    sendingRef.current = true;
+    setSending(true);
+    setError({ optionId: null, message: null });
 
-    const { increment, setDoc: fsSetDoc, updateDoc: fsUpdateDoc, getDoc } = 
-      await import('firebase/firestore');
-    
-    const existing = await getDoc(reactionRef);
-    
-    if (!existing.exists()) {
-      await fsSetDoc(reactionRef, {
-        counts: { '✓': 0, '!': 0, '✗': 0 },
-        individual: { [playerId]: symbol },
-      });
-      await fsUpdateDoc(reactionRef, {
-        [`counts.${symbol}`]: increment(1),
-      });
-    } else {
-      await fsUpdateDoc(reactionRef, {
-        [`counts.${symbol}`]: increment(1),
-        [`individual.${playerId}`]: symbol,
-      });
+    const reactionRef = doc(db, 'rooms', roomCode, 'rounds', roundId, 'reactions', optionId);
+    try {
+      await writeReaction(db, reactionRef, playerId, symbol);
+      setMyReactions(prev => ({ ...prev, [optionId]: symbol }));
+    } catch (err) {
+      console.error('Reaction failed:', err);
+      setError({ optionId, message: `That didn't go through (${err.code || 'error'}). Tap again.` });
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
-
-    setMyReactions(prev => ({ ...prev, [currentOption.id]: symbol }));
   }
-
-  const currentOption = round.options[currentIndex];
-  const myReactionForCurrent = currentOption ? myReactions[currentOption.id] : null;
 
   if (roundStatus === 'complete') {
     return (
@@ -227,24 +233,28 @@ export function ReactRoundPlayer({ roomCode, round, roundId, playerId, playerNam
         <div style={styles.reactionButtons}>
           <button
             onClick={() => react('✓')}
+            disabled={sending}
             style={{ ...styles.reactionButton, borderColor: '#4caf50', color: '#4caf50' }}
           >
             ✓
           </button>
           <button
             onClick={() => react('!')}
+            disabled={sending}
             style={{ ...styles.reactionButton, borderColor: '#ff9800', color: '#ff9800' }}
           >
             !
           </button>
           <button
             onClick={() => react('✗')}
+            disabled={sending}
             style={{ ...styles.reactionButton, borderColor: '#f44336', color: '#f44336' }}
           >
             ✗
           </button>
         </div>
       )}
+      {errorForCurrent && <p style={styles.error}>{errorForCurrent}</p>}
     </div>
   );
 }
@@ -252,6 +262,12 @@ export function ReactRoundPlayer({ roomCode, round, roundId, playerId, playerNam
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
+  error: {
+    color: '#f44336',
+    fontSize: '0.9rem',
+    textAlign: 'center',
+    marginTop: '1rem',
+  },
   container: {
     fontFamily: 'sans-serif',
     maxWidth: '700px',

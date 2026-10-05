@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs } from 'firebase/firestore';
+import { normalizeReactionSnapshot } from '../utils/reactions';
 
 const SPEED_LABELS = ['▸', '▸▸', '▸▸▸'];
 const SPEED_VALUES = [25, 50, 90]; // pixels per second — slowest to fastest
@@ -47,9 +48,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
           const snap = await getDocs(
             collection(db, 'rooms', roomCode, 'rounds', round.id, 'reactions')
           );
-          const reactions = {};
-          snap.docs.forEach(d => { reactions[d.id] = d.data(); });
-          entry.reactions = reactions;
+          entry.reactions = normalizeReactionSnapshot(snap);
         }
 
         if (round.type === 'vote') {
@@ -196,7 +195,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
           <div style={styles.titleCard}>
             <h1 style={styles.sessionTitle}>{sessionName}</h1>
             <p style={styles.playerRoll}>
-              {players.map(p => p.name).join(' · ')}
+              {[...new Set(players.map(p => p.name.trim()))].join(' · ')}
             </p>
           </div>
 

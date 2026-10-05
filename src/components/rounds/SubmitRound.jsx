@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../../firebase';
 import {
-  doc, setDoc, updateDoc, onSnapshot,
+  doc, setDoc, getDoc, updateDoc, onSnapshot,
   collection, serverTimestamp
 } from 'firebase/firestore';
 import Timer from '../Timer';
@@ -19,7 +19,8 @@ export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName
       collection(db, 'rooms', roomCode, 'rounds', roundId, 'submissions'),
       snap => {
         setSubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }
+      },
+      err => console.error('Submissions listener failed:', err)
     );
     return () => unsub();
   }, [roomCode, roundId]);
@@ -122,31 +123,40 @@ export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName
 export function SubmitRoundPlayer({ roomCode, round, roundId, playerId, playerName }) {
   const [text, setText] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const [roundStatus, setRoundStatus] = useState(round.status);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const roundStatus = round.status;
 
+  // After a reload, check whether this player already submitted.
   useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, 'rooms', roomCode, 'rounds', roundId),
-      snap => {
-        const data = snap.data();
-        if (data) setRoundStatus(data.status);
-      }
-    );
-    return () => unsub();
-  }, [roomCode, roundId]);
+    let cancelled = false;
+    getDoc(doc(db, 'rooms', roomCode, 'rounds', roundId, 'submissions', playerId))
+      .then(snap => { if (!cancelled && snap.exists()) setSubmitted(true); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [roomCode, roundId, playerId]);
 
   async function submit() {
-    if (!text.trim() || submitted) return;
-    await setDoc(
-      doc(db, 'rooms', roomCode, 'rounds', roundId, 'submissions', playerId),
-      {
-        text: text.trim(),
-        submittedAt: serverTimestamp(),
-        playerId,
-        playerName,
-      }
-    );
-    setSubmitted(true);
+    if (!text.trim() || submitted || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await setDoc(
+        doc(db, 'rooms', roomCode, 'rounds', roundId, 'submissions', playerId),
+        {
+          text: text.trim(),
+          submittedAt: serverTimestamp(),
+          playerId,
+          playerName,
+        }
+      );
+      setSubmitted(true);
+    } catch (err) {
+      console.error('Submit failed:', err);
+      setError(`That didn't go through (${err.code || 'error'}). Tap Submit again.`);
+    } finally {
+      setSending(false);
+    }
   }
 
   if (roundStatus === 'complete') {
@@ -183,21 +193,23 @@ export function SubmitRoundPlayer({ roomCode, round, roundId, playerId, playerNa
         value={text}
         onChange={e => setText(e.target.value)}
         placeholder="Type your response..."
+        maxLength={1000}
         rows={4}
         style={styles.textarea}
       />
 
       <button
         onClick={submit}
-        disabled={!text.trim()}
+        disabled={!text.trim() || sending}
         style={{
           ...styles.primaryButton,
           opacity: text.trim() ? 1 : 0.5,
           cursor: text.trim() ? 'pointer' : 'default',
         }}
       >
-        Submit
+        {sending ? 'Sending…' : 'Submit'}
       </button>
+      {error && <p style={styles.error}>{error}</p>}
     </div>
   );
 }
@@ -280,6 +292,11 @@ const styles = {
     resize: 'vertical',
     marginBottom: '1rem',
     boxSizing: 'border-box',
+  },
+  error: {
+    color: '#f44336',
+    fontSize: '0.9rem',
+    marginTop: '0.75rem',
   },
   primaryButton: {
     padding: '0.75rem 2rem',
