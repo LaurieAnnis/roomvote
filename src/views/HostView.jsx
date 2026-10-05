@@ -373,6 +373,8 @@ function HostViewAuthed({ user, onSignOut }) {
         : [],
       showNames: currentRound.showNames ?? false,
       showResultsLive: currentRound.showResultsLive ?? false,
+      // Lets a phone find its answer from the round being redone.
+      redoOf: currentRoundId,
       createdAt: serverTimestamp(),
     };
 
