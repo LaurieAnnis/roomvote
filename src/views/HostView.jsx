@@ -449,6 +449,16 @@ function HostViewAuthed({ user, onSignOut }) {
   const hasCompletedRounds = completedRounds.length > 0;
   const noActiveRound = !currentRound || currentRound.status === 'complete';
 
+  // Rolling credits on the host also rolls them on every phone.
+  async function setCreditsRolling(on) {
+    setShowCredits(on);
+    try {
+      await updateDoc(doc(db, 'rooms', roomCode), { creditsRolling: on });
+    } catch (err) {
+      console.error('Credits sync failed:', err);
+    }
+  }
+
   if (showCredits) {
     return (
       <Credits
@@ -456,7 +466,7 @@ function HostViewAuthed({ user, onSignOut }) {
         roomCode={roomCode}
         rounds={rounds}
         players={players}
-        onClose={() => setShowCredits(false)}
+        onClose={() => setCreditsRolling(false)}
       />
     );
   }
@@ -604,7 +614,7 @@ function HostViewAuthed({ user, onSignOut }) {
               </button>
               {hasCompletedRounds && noActiveRound && (
                 <button
-                  onClick={() => setShowCredits(true)}
+                  onClick={() => setCreditsRolling(true)}
                   style={styles.creditsButton}
                 >
                   🎬 Roll Credits

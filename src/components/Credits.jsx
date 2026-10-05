@@ -7,7 +7,9 @@ const SPEED_LABELS = ['▸', '▸▸', '▸▸▸'];
 const SPEED_VALUES = [25, 50, 90]; // pixels per second — slowest to fastest
 const RESUME_DELAY = 2000; // ms after last manual scroll before auto-scroll resumes
 
-export default function Credits({ sessionName, roomCode, rounds, players, onClose }) {
+// showControls=false is the player-phone version: no buttons, just the roll
+// plus swipe and hold.
+export default function Credits({ sessionName, roomCode, rounds, players, onClose, showControls = true }) {
   const [roundData, setRoundData] = useState(null);
   const [highlights, setHighlights] = useState([]);
   const [scrollY, setScrollY] = useState(0);
@@ -70,8 +72,10 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
     fetchAll();
   }, [completedRounds.length]);
 
+  const touching = useRef(false);
+
   // Handle manual scroll (wheel + touch)
-  const handleManualScroll = useCallback((deltaY) => {
+  const handleManualScroll = useCallback((deltaY, fromTouch = false) => {
     manualScrolling.current = true;
 
     // Clear any pending resume timer
@@ -85,9 +89,11 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       return Math.max(0, Math.min(next, maxScroll));
     });
 
-    // Resume auto-scroll after idle (unless manually paused)
+    // A finger on the screen holds the roll; lifting it resumes (touchend).
+    // A mouse wheel has no "release", so it resumes after a short idle.
+    if (fromTouch) return;
     resumeTimer.current = setTimeout(() => {
-      manualScrolling.current = false;
+      if (!touching.current) manualScrolling.current = false;
     }, RESUME_DELAY);
   }, []);
 
@@ -99,7 +105,12 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
 
     let touchStartY = null;
     function onTouchStart(e) {
+      // Taps on buttons keep working normally.
+      if (e.target.closest('button')) return;
       touchStartY = e.touches[0].clientY;
+      touching.current = true;
+      manualScrolling.current = true;
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
     }
     function onTouchMove(e) {
       if (touchStartY === null) return;
@@ -107,22 +118,28 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       const touchY = e.touches[0].clientY;
       const delta = touchStartY - touchY;
       touchStartY = touchY;
-      handleManualScroll(delta);
+      handleManualScroll(delta, true);
     }
-    function onTouchEnd() {
+    function onTouchEnd(e) {
+      if (e.touches && e.touches.length > 0) return;
       touchStartY = null;
+      touching.current = false;
+      // Rolling continues from wherever the finger left it.
+      manualScrolling.current = false;
     }
 
     window.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('touchstart', onTouchStart, { passive: true });
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd, { passive: true });
+    window.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     return () => {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('touchstart', onTouchStart);
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
       if (resumeTimer.current) clearTimeout(resumeTimer.current);
     };
   }, [handleManualScroll]);
@@ -287,6 +304,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
       </div>
 
       {/* Fixed controls */}
+      {showControls && (
       <div style={styles.controls}>
         <button onClick={onClose} style={styles.controlButton}>
           ← Back to session
@@ -298,6 +316,7 @@ export default function Credits({ sessionName, roomCode, rounds, players, onClos
           {SPEED_LABELS[speedIndex]}
         </button>
       </div>
+      )}
     </div>
   );
 }
@@ -373,6 +392,13 @@ const styles = {
     background: '#16171d',
     overflow: 'hidden',
     zIndex: 1000,
+    // Stop the phone's own scrolling, pull-to-refresh, and long-press menus
+    // from fighting the swipe.
+    touchAction: 'none',
+    overscrollBehavior: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    WebkitTouchCallout: 'none',
   },
   loading: {
     position: 'fixed',

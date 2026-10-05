@@ -5,6 +5,7 @@ import { SubmitRoundPlayer } from '../components/rounds/SubmitRound';
 import { ReactRoundPlayer } from '../components/rounds/ReactRound';
 import { VoteRoundPlayer } from '../components/rounds/VoteRound';
 import ConnectionBanner from '../components/ConnectionBanner';
+import PlayerCredits from '../components/PlayerCredits';
 import { makeId } from '../utils/ids';
 import { loadPlayerSession, savePlayerSession, clearPlayerSession } from '../utils/session';
 
@@ -41,6 +42,8 @@ export default function PlayerView() {
   const [currentRoundId, setCurrentRoundId] = useState(null);
   const [currentRound, setCurrentRound] = useState(null);
   const [joinedCode, setJoinedCode] = useState('');
+  const [sessionName, setSessionName] = useState('');
+  const [creditsRolling, setCreditsRolling] = useState(false);
   const [offline, setOffline] = useState(false);
   const [listenError, setListenError] = useState(null);
 
@@ -141,6 +144,8 @@ export default function PlayerView() {
         const data = snap.data();
         setRoomStatus(data.status);
         setCurrentRoundId(data.currentRoundId);
+        setSessionName(data.sessionName || '');
+        setCreditsRolling(!!data.creditsRolling);
       },
       err => {
         console.error('Room listener failed:', err);
@@ -224,6 +229,15 @@ export default function PlayerView() {
         <h2>Session ended.</h2>
         <p style={styles.subtext}>Thanks for participating.</p>
       </div>
+    );
+  }
+
+  if (creditsRolling) {
+    return (
+      <>
+        {banner}
+        <PlayerCredits roomCode={joinedCode} sessionName={sessionName} />
+      </>
     );
   }
 
