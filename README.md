@@ -1,16 +1,21 @@
-# React + Vite
+# RoomVote
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A browser-based, real-time classroom voting app built for AME 494 Indie Game Studio at ASU. Jackbox-style: host runs a session on a projected room screen, students join on their phones with a room code or QR code, no app install and no student accounts.
 
-Currently, two official plugins are available:
+**Live app:** https://roomvote-2026.web.app
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## What it does
 
-## React Compiler
+The host creates a room and runs a sequence of rounds. Three round types:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Submit** -- free-text entry with a timer
+- **React** -- items shown one at a time, students react privately with ✓ / ! / ✗, results shown as a bar chart sorted by ✓ count
+- **Vote** -- multiple choice, hidden results until the host reveals them
 
-## Expanding the ESLint configuration
+Per-round visibility toggles control whether player names and live results show on the room screen. All data -- names, responses, timestamps -- logs to a Google Sheet once per round regardless of what's visible on screen, so the sheet is always the full record.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Only the host authenticates (Google sign-in via Firebase Auth). Students join anonymously with just a name and room code.
+
+## Author
+
+Built by Laurie Annis for AME 494 Indie Game Studio, ASU Herberger Institute, The GAME School.
