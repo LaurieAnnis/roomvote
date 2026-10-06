@@ -24,7 +24,9 @@ const ROUND_TYPES = [
 
 const DEFAULT_TIMERS = { submit: 180, react: 30, vote: 60 };
 
-const BASE_URL = 'https://roomvote-2026.web.app';
+// The QR code points at whatever address the host page is open on, so a
+// preview link's QR code opens the same preview on phones.
+const BASE_URL = window.location.origin;
 
 // A reloaded host tab reopens its room only if the room is from this class.
 const RESTORE_WINDOW_MS = 3 * 60 * 60 * 1000;
