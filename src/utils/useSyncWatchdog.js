@@ -7,14 +7,18 @@ import { cycleNetwork } from './connection';
 // the phone sits on an old screen until it reloads; the SDK's own timeout
 // took about 45 seconds in testing.
 //
-// Every few seconds this asks Firestore's REST API for the room and the
-// current round. That is a separate plain web request, so a dead listener
+// Every 20 seconds this asks Firestore's REST API for the room (and, during a
+// React round, the round, since that's where the current item lives). That is a separate plain web request, so a dead listener
 // connection can't answer it from stale state (the SDK's getDocFromServer
 // can). If the listeners are behind the server and stay behind, the phone
 // reconnects; if reconnecting doesn't help three checks in a row, it reloads,
 // which is safe because a reload rejoins as the same player.
+//
+// Read budget: on the free Spark plan Firestore stops answering after 50,000
+// reads a day. At 30 phones this costs about 5,400 reads an hour outside React
+// rounds and about 10,800 an hour during them.
 
-const PROBE_EVERY_MS = 10000;
+const PROBE_EVERY_MS = 20000;
 const PROBE_TIMEOUT_MS = 6000;
 const GRACE_MS = 2500;
 const RELOAD_AFTER = 3;
@@ -77,9 +81,13 @@ export function useSyncWatchdog({ enabled, roomCode, seenRef }) {
     async function serverKeys() {
       const room = await fetchFields(`rooms/${roomCode}`);
       if (!room) return null;
+      const seenRound = seenRef.current.round;
+      let roundPart = roundKey(seenRound?.id, seenRound);
+      // A new round, a finished round and the credits all show up on the room
+      // (currentRoundId and status). Only a React round's current item lives
+      // on the round alone, so that is the only time the round is read.
       const roundId = room.currentRoundId || null;
-      let roundPart = roundKey(seenRef.current.round?.id, seenRef.current.round);
-      if (roundId) {
+      if (roundId && roundId === seenRound?.id && seenRound?.type === 'react') {
         const round = await fetchFields(`rooms/${roomCode}/rounds/${roundId}`);
         if (round) roundPart = roundKey(roundId, round);
       }
@@ -88,6 +96,7 @@ export function useSyncWatchdog({ enabled, roomCode, seenRef }) {
 
     async function probe() {
       if (running || cancelled || document.visibilityState !== 'visible') return;
+      if (seenRef.current.room?.status === 'closed') return;
       running = true;
       try {
         const before = seenKeys();
