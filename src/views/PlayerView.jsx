@@ -37,6 +37,9 @@ export default function PlayerView() {
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
   const [rejoining, setRejoining] = useState(!!initial.stored);
+  // Room shown on the "Rejoining…" screen (a reload, or following the host).
+  const [rejoinCode, setRejoinCode] = useState(initial.stored?.roomCode || '');
+  const [movedFrom, setMovedFrom] = useState(null);
   const [error, setError] = useState(null);
 
   const [roomStatus, setRoomStatus] = useState('lobby');
@@ -49,6 +52,8 @@ export default function PlayerView() {
   const [listenError, setListenError] = useState(null);
 
   const joiningRef = useRef(false);
+  // What the listeners last delivered, for the sync watchdog to compare.
+  const seenRef = useRef({ room: null, round: null });
 
   async function joinRoom({ code, playerName, id, alreadyRegistered }) {
     if (joiningRef.current) return;
@@ -57,7 +62,13 @@ export default function PlayerView() {
     setError(null);
 
     try {
-      const snap = await getDoc(doc(db, 'rooms', code));
+      // A room the host has ended may point at the room that replaced it.
+      let snap = await getDoc(doc(db, 'rooms', code));
+      for (let hop = 0; hop < 3 && snap.exists() && snap.data().status === 'closed' && snap.data().movedTo; hop++) {
+        code = snap.data().movedTo;
+        alreadyRegistered = false;
+        snap = await getDoc(doc(db, 'rooms', code));
+      }
 
       if (!snap.exists()) {
         clearPlayerSession();
@@ -85,6 +96,12 @@ export default function PlayerView() {
       if (readUrlRoom() !== code) {
         window.history.replaceState(null, '', `?room=${code}`);
       }
+      seenRef.current = { room: null, round: null };
+      setCurrentRoundId(null);
+      setCurrentRound(null);
+      setCreditsRolling(false);
+      setRoomStatus(snap.data().status || 'lobby');
+      setRoomCode(code);
       setJoinedCode(code);
       setJoined(true);
     } catch (err) {
@@ -107,6 +124,33 @@ export default function PlayerView() {
     joinRoom({ code, playerName, id: playerId, alreadyRegistered: !!sameIdentity });
   }
 
+  // Back to the join screen, keeping the name, so a student can type another code.
+  function leaveRoom() {
+    clearPlayerSession();
+    seenRef.current = { room: null, round: null };
+    setJoined(false);
+    setJoinedCode('');
+    setRoomCode('');
+    setCurrentRoundId(null);
+    setCurrentRound(null);
+    setCreditsRolling(false);
+    setRoomStatus('lobby');
+    setMovedFrom(null);
+    setError(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  // The host ended this room and opened a new one: follow, same name.
+  function followRoom(newCode) {
+    if (!newCode || newCode === joinedCode || joiningRef.current) return;
+    setMovedFrom(joinedCode);
+    setRejoinCode(newCode);
+    setRejoining(true);
+    joinRoom({ code: newCode, playerName: name.trim(), id: playerId, alreadyRegistered: false });
+  }
+  const followRef = useRef(followRoom);
+  followRef.current = followRoom;
+
   function joinAsSomeoneElse() {
     clearPlayerSession();
     setPlayerId(makeId());
@@ -122,12 +166,11 @@ export default function PlayerView() {
   useEffect(() => {
     const s = initial.stored;
     if (!s) return;
+    setRejoinCode(s.roomCode);
     joinRoom({ code: s.roomCode, playerName: s.name, id: s.playerId, alreadyRegistered: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // What the listeners last delivered, for the sync watchdog to compare.
-  const seenRef = useRef({ room: null, round: null });
 
   const applyRoom = useCallback(data => {
     seenRef.current.room = data;
@@ -161,7 +204,12 @@ export default function PlayerView() {
           }
           return;
         }
-        applyRoom(snap.data());
+        const data = snap.data();
+        applyRoom(data);
+        if (data.status === 'closed' && !snap.metadata.fromCache) {
+          if (data.movedTo) followRef.current(data.movedTo);
+          else clearPlayerSession();
+        }
       },
       err => {
         console.error('Room listener failed:', err);
@@ -198,7 +246,9 @@ export default function PlayerView() {
     return (
       <div style={styles.centered}>
         <h2>Rejoining…</h2>
-        <p style={styles.subtext}>Reconnecting you to room {initial.stored.roomCode}.</p>
+        <p style={styles.subtext}>
+          {movedFrom ? `The host moved to a new room. Joining ${rejoinCode}.` : `Reconnecting you to room ${rejoinCode}.`}
+        </p>
       </div>
     );
   }
@@ -242,6 +292,9 @@ export default function PlayerView() {
       <div style={styles.centered}>
         <h2>Session ended.</h2>
         <p style={styles.subtext}>Thanks for participating.</p>
+        <button onClick={leaveRoom} style={{ ...styles.primaryButton, marginTop: '1.5rem' }}>
+          Join another room
+        </button>
       </div>
     );
   }
@@ -262,9 +315,14 @@ export default function PlayerView() {
         <h2>You're in, {name.trim()}.</h2>
         <p style={styles.subtext}>Waiting for the host to start...</p>
         <p style={styles.hint}>Keep this tab open. If your phone locks, it will reconnect on its own.</p>
-        <button onClick={joinAsSomeoneElse} style={styles.linkButton}>
-          Not you? Join with a different name
-        </button>
+        <div style={styles.linkRow}>
+          <button onClick={leaveRoom} style={{ ...styles.linkButton, marginTop: 0 }}>
+            Leave this room
+          </button>
+          <button onClick={joinAsSomeoneElse} style={{ ...styles.linkButton, marginTop: 0 }}>
+            Not you? Change name
+          </button>
+        </div>
       </div>
     );
   }
@@ -275,6 +333,9 @@ export default function PlayerView() {
         {banner}
         <h2>Round complete.</h2>
         <p style={styles.subtext}>Stand by for the next round.</p>
+        <button onClick={leaveRoom} style={styles.linkButton}>
+          Leave this room
+        </button>
       </div>
     );
   }
@@ -341,6 +402,13 @@ const styles = {
     color: '#666',
     fontSize: '0.85rem',
     maxWidth: '20rem',
+  },
+  linkRow: {
+    display: 'flex',
+    gap: '1.5rem',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginTop: '2rem',
   },
   linkButton: {
     marginTop: '2rem',

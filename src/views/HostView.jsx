@@ -26,8 +26,8 @@ const DEFAULT_TIMERS = { submit: 180, react: 30, vote: 60 };
 
 const BASE_URL = 'https://roomvote-2026.web.app';
 
-// A reloaded host tab reopens its room only if the room is from today's class.
-const RESTORE_WINDOW_MS = 12 * 60 * 60 * 1000;
+// A reloaded host tab reopens its room only if the room is from this class.
+const RESTORE_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 // Add allowed host emails here. Only these accounts can access the host view.
 // Set to null to allow any Google account.
@@ -168,6 +168,10 @@ function HostViewAuthed({ user, onSignOut }) {
   const [newRoundShowResultsLive, setNewRoundShowResultsLive] = useState(false);
 
   const [restoring, setRestoring] = useState(() => !!loadHostSession(user.uid));
+  // When this host opens a new room, the previous one is ended and points
+  // phones still in it to the new code.
+  const [previousRoomCode, setPreviousRoomCode] = useState(null);
+  const [restoredFrom, setRestoredFrom] = useState(null);
   const [offline, setOffline] = useState(false);
   const [listenError, setListenError] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -186,6 +190,7 @@ function HostViewAuthed({ user, onSignOut }) {
         const createdMs = data?.createdAt?.toMillis?.() || 0;
         const recent = Date.now() - createdMs < RESTORE_WINDOW_MS;
         if (snap.exists() && data.hostUid === user.uid && data.status !== 'closed' && recent) {
+          setRestoredFrom(createdMs);
           setRoomCode(stored.roomCode);
           setSessionName(data.sessionName || stored.sessionName || '');
           // A host reload mid-credits would otherwise leave every phone on them.
@@ -194,6 +199,10 @@ function HostViewAuthed({ user, onSignOut }) {
               .catch(err => console.error('Credits reset failed:', err));
           }
         } else {
+          // Too old to reopen, but phones may still be sitting in it.
+          if (snap.exists() && data.hostUid === user.uid && data.status !== 'closed') {
+            setPreviousRoomCode(stored.roomCode);
+          }
           clearHostSession();
         }
       })
@@ -235,6 +244,15 @@ function HostViewAuthed({ user, onSignOut }) {
         createdAt: serverTimestamp(),
       });
       saveHostSession({ roomCode: code, sessionName: name, uid: user.uid });
+      if (previousRoomCode) {
+        updateDoc(doc(db, 'rooms', previousRoomCode), {
+          status: 'closed',
+          creditsRolling: false,
+          movedTo: code,
+        }).catch(err => console.error('Could not forward the previous room:', err));
+        setPreviousRoomCode(null);
+      }
+      setRestoredFrom(null);
       setRoomCode(code);
       setSessionName(name);
     } catch (err) {
@@ -246,6 +264,15 @@ function HostViewAuthed({ user, onSignOut }) {
   }
 
   function leaveRoom() {
+    const ok = window.confirm(
+      `End room ${roomCode} and start a new session? Phones in it will move to the new room once you create it.`
+    );
+    if (!ok) return;
+    // Ended now, so a phone that reloads doesn't land back in it.
+    updateDoc(doc(db, 'rooms', roomCode), { status: 'closed', creditsRolling: false })
+      .catch(err => console.error('Could not close the room:', err));
+    setPreviousRoomCode(roomCode);
+    setRestoredFrom(null);
     clearHostSession();
     setRoomCode(null);
     setSessionName('');
@@ -520,11 +547,22 @@ function HostViewAuthed({ user, onSignOut }) {
       {/* Auth bar */}
       <div style={styles.authBar}>
         <span style={styles.authEmail}>{user.email}</span>
-        <button onClick={leaveRoom} style={styles.signOutButton} title="Close this screen and start a different session. Nothing is deleted.">
+        <button onClick={leaveRoom} style={styles.signOutButton} title="End this room and start a new one. Phones in it follow you to the new room. Nothing is deleted.">
           New session
         </button>
         <button onClick={onSignOut} style={styles.signOutButton}>Sign out</button>
       </div>
+
+      {restoredFrom !== null && (
+        <div style={styles.restoredBar}>
+          <span>
+            Reopened room {roomCode}
+            {restoredFrom ? ` from ${new Date(restoredFrom).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.
+          </span>
+          <button onClick={leaveRoom} style={styles.restoredButton}>Start a new session instead</button>
+          <button onClick={() => setRestoredFrom(null)} style={styles.restoredDismiss} aria-label="Dismiss">×</button>
+        </div>
+      )}
 
       {actionError && <p style={styles.actionError}>{actionError}</p>}
 
@@ -782,6 +820,36 @@ function HostViewAuthed({ user, onSignOut }) {
 }
 
 const styles = {
+  restoredBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: '0.75rem',
+    padding: '0.6rem 1rem',
+    margin: '0 0 1rem 0',
+    background: '#1e2a3a',
+    border: '1px solid #35506e',
+    borderRadius: '8px',
+    color: '#cfe0f5',
+    fontSize: '0.9rem',
+  },
+  restoredButton: {
+    padding: '0.35rem 0.8rem',
+    fontSize: '0.85rem',
+    background: '#35506e',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+  },
+  restoredDismiss: {
+    background: 'none',
+    border: 'none',
+    color: '#88a',
+    fontSize: '1.1rem',
+    cursor: 'pointer',
+  },
   actionError: {
     color: '#f44336',
     fontSize: '0.9rem',
