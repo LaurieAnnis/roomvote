@@ -10,7 +10,7 @@ import { db } from '../firebase';
 const HIDDEN_THRESHOLD_MS = 5000;
 let installed = false;
 
-async function cycleNetwork() {
+export async function cycleNetwork() {
   try {
     await disableNetwork(db);
     await enableNetwork(db);

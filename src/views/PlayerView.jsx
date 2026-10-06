@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
 import { doc, setDoc, getDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { SubmitRoundPlayer } from '../components/rounds/SubmitRound';
@@ -7,6 +7,7 @@ import { VoteRoundPlayer } from '../components/rounds/VoteRound';
 import ConnectionBanner from '../components/ConnectionBanner';
 import PlayerCredits from '../components/PlayerCredits';
 import { makeId } from '../utils/ids';
+import { useSyncWatchdog } from '../utils/useSyncWatchdog';
 import { loadPlayerSession, savePlayerSession, clearPlayerSession } from '../utils/session';
 
 function readUrlRoom() {
@@ -125,6 +126,25 @@ export default function PlayerView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // What the listeners last delivered, for the sync watchdog to compare.
+  const seenRef = useRef({ room: null, round: null });
+
+  const applyRoom = useCallback(data => {
+    seenRef.current.room = data;
+    setRoomStatus(data.status);
+    setCurrentRoundId(data.currentRoundId);
+    setSessionName(data.sessionName || '');
+    setCreditsRolling(!!data.creditsRolling);
+  }, []);
+
+  const applyRound = useCallback((id, data) => {
+    const round = { id, ...data };
+    seenRef.current.round = round;
+    setCurrentRound(round);
+  }, []);
+
+  useSyncWatchdog({ enabled: joined, roomCode: joinedCode, seenRef });
+
   useEffect(() => {
     if (!joined) return;
 
@@ -141,11 +161,7 @@ export default function PlayerView() {
           }
           return;
         }
-        const data = snap.data();
-        setRoomStatus(data.status);
-        setCurrentRoundId(data.currentRoundId);
-        setSessionName(data.sessionName || '');
-        setCreditsRolling(!!data.creditsRolling);
+        applyRoom(snap.data());
       },
       err => {
         console.error('Room listener failed:', err);
@@ -154,7 +170,7 @@ export default function PlayerView() {
     );
 
     return () => unsubRoom();
-  }, [joined, joinedCode]);
+  }, [joined, joinedCode, applyRoom]);
 
   useEffect(() => {
     if (!currentRoundId || !joinedCode) {
@@ -165,9 +181,7 @@ export default function PlayerView() {
     const unsub = onSnapshot(
       doc(db, 'rooms', joinedCode, 'rounds', currentRoundId),
       snap => {
-        if (snap.exists()) {
-          setCurrentRound({ id: snap.id, ...snap.data() });
-        }
+        if (snap.exists()) applyRound(snap.id, snap.data());
       },
       err => {
         console.error('Round listener failed:', err);
@@ -176,7 +190,7 @@ export default function PlayerView() {
     );
 
     return () => unsub();
-  }, [currentRoundId, joinedCode]);
+  }, [currentRoundId, joinedCode, applyRound]);
 
   const banner = <ConnectionBanner offline={joined && offline} error={listenError} />;
 

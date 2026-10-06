@@ -188,6 +188,11 @@ function HostViewAuthed({ user, onSignOut }) {
         if (snap.exists() && data.hostUid === user.uid && data.status !== 'closed' && recent) {
           setRoomCode(stored.roomCode);
           setSessionName(data.sessionName || stored.sessionName || '');
+          // A host reload mid-credits would otherwise leave every phone on them.
+          if (data.creditsRolling) {
+            updateDoc(doc(db, 'rooms', stored.roomCode), { creditsRolling: false })
+              .catch(err => console.error('Credits reset failed:', err));
+          }
         } else {
           clearHostSession();
         }
@@ -337,6 +342,7 @@ function HostViewAuthed({ user, onSignOut }) {
       await updateDoc(doc(db, 'rooms', roomCode), {
         currentRoundId: roundRef.id,
         status: 'active',
+        creditsRolling: false,
       });
     } catch (err) {
       console.error('Start round failed:', err);
@@ -389,6 +395,7 @@ function HostViewAuthed({ user, onSignOut }) {
       await updateDoc(doc(db, 'rooms', roomCode), {
         currentRoundId: roundRef.id,
         status: 'active',
+        creditsRolling: false,
       });
     } catch (err) {
       console.error('Redo round failed:', err);
