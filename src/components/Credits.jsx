@@ -432,7 +432,10 @@ const styles = {
     paddingBottom: '6rem',
   },
   sessionTitle: {
-    fontSize: '3rem',
+    // Unitless line heights here: the page's base line height is a fixed
+    // pixel value, which made wrapped large text overlap itself.
+    fontSize: 'clamp(2rem, 8vw, 3rem)',
+    lineHeight: 1.15,
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: '1.5rem',
@@ -464,6 +467,7 @@ const styles = {
   },
   roundPrompt: {
     fontSize: '1.5rem',
+    lineHeight: 1.3,
     color: '#fff',
     marginBottom: '1.5rem',
   },
@@ -510,6 +514,7 @@ const styles = {
   },
   highlightsTitle: {
     fontSize: '1.8rem',
+    lineHeight: 1.2,
     color: '#ff9800',
     textAlign: 'center',
     marginBottom: '2rem',
@@ -527,6 +532,7 @@ const styles = {
   },
   highlightValue: {
     fontSize: '1.6rem',
+    lineHeight: 1.3,
     color: '#fff',
     fontWeight: 'bold',
     marginBottom: '0.25rem',
