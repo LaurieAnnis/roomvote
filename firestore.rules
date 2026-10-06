@@ -1,0 +1,103 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: is this the room's host?
+    function isRoomHost(roomCode) {
+      return request.auth != null
+        && request.auth.uid == get(/databases/$(database)/documents/rooms/$(roomCode)).data.hostUid;
+    }
+
+    // ── Rooms ──────────────────────────────────────────────────────
+    match /rooms/{roomCode} {
+
+      // Anyone can read room state (players need status, currentRoundId)
+      allow read: if true;
+
+      // Only authenticated users can create a room, and they must set themselves as host
+      allow create: if request.auth != null
+                     && request.resource.data.hostUid == request.auth.uid;
+
+      // Only the room's host can update or delete the room
+      allow update: if request.auth != null
+                     && resource.data.hostUid == request.auth.uid;
+
+      allow delete: if request.auth != null
+                     && resource.data.hostUid == request.auth.uid;
+
+      // ── Players ────────────────────────────────────────────────
+      match /players/{playerId} {
+        // Anyone can read (host needs player list)
+        allow read: if true;
+
+        // Anyone can create a player doc (joining) — validate shape
+        allow create: if request.resource.data.keys().hasAll(['name', 'joinedAt'])
+                       && request.resource.data.name is string
+                       && request.resource.data.name.size() > 0
+                       && request.resource.data.name.size() <= 50;
+
+        // No updating player docs
+        allow update: if false;
+
+        // Only the host can delete (session cleanup)
+        allow delete: if isRoomHost(roomCode);
+      }
+
+      // ── Rounds ─────────────────────────────────────────────────
+      match /rounds/{roundId} {
+        // Anyone can read (players need round data)
+        allow read: if true;
+
+        // Only the host can create, update, or delete rounds
+        allow create: if isRoomHost(roomCode);
+        allow update: if isRoomHost(roomCode);
+        allow delete: if isRoomHost(roomCode);
+
+        // ── Submissions (Submit rounds) ────────────────────────
+        match /submissions/{submissionId} {
+          allow read: if true;
+
+          // Players create submissions — validate shape, no auth required
+          allow create: if request.resource.data.keys().hasAll(['text', 'playerId', 'playerName', 'submittedAt'])
+                         && request.resource.data.text is string
+                         && request.resource.data.text.size() > 0
+                         && request.resource.data.text.size() <= 1000;
+
+          allow update: if false;
+
+          // Only the host can delete (session cleanup)
+          allow delete: if isRoomHost(roomCode);
+        }
+
+        // ── Reactions (React rounds) ───────────────────────────
+        match /reactions/{reactionId} {
+          allow read: if true;
+
+          // Players create and update reactions (atomic increments), no auth required
+          allow create, update: if true;
+
+          // Only the host can delete (session cleanup)
+          allow delete: if isRoomHost(roomCode);
+        }
+
+        // ── Votes (Vote rounds) ────────────────────────────────
+        match /votes/{voteId} {
+          allow read: if true;
+
+          // Players create and update votes, no auth required
+          allow create: if true;
+          allow update: if true;
+
+          // Only the host can delete (session cleanup)
+          allow delete: if isRoomHost(roomCode);
+        }
+      }
+    }
+
+    // ── Deny everything else ───────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

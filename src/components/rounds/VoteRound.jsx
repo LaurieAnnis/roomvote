@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase';
 import {
-  doc, setDoc, updateDoc, onSnapshot,
+  doc, setDoc, getDoc, updateDoc, onSnapshot,
   collection, serverTimestamp
 } from 'firebase/firestore';
 import Timer from '../Timer';
@@ -22,7 +22,8 @@ export function VoteRoundHost({ roomCode, round, roundId, players, sessionName }
         const v = {};
         snap.docs.forEach(d => { v[d.id] = d.data().optionId; });
         setVotes(v);
-      }
+      },
+      err => console.error('Votes listener failed:', err)
     );
     return () => unsub();
   }, [roomCode, roundId]);
@@ -107,26 +108,38 @@ export function VoteRoundHost({ roomCode, round, roundId, players, sessionName }
 
 export function VoteRoundPlayer({ roomCode, round, roundId, playerId, playerName }) {
   const [myVote, setMyVote] = useState(null);
-  const [roundStatus, setRoundStatus] = useState(round.status);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const sendingRef = useRef(false);
+  const roundStatus = round.status;
 
+  // After a reload, check whether this player already voted.
   useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, 'rooms', roomCode, 'rounds', roundId),
-      snap => {
-        const data = snap.data();
-        if (data) setRoundStatus(data.status);
-      }
-    );
-    return () => unsub();
-  }, [roomCode, roundId]);
+    let cancelled = false;
+    getDoc(doc(db, 'rooms', roomCode, 'rounds', roundId, 'votes', playerId))
+      .then(snap => { if (!cancelled && snap.exists()) setMyVote(snap.data().optionId); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [roomCode, roundId, playerId]);
 
   async function castVote(optionId) {
-    if (myVote) return;
-    await setDoc(
-      doc(db, 'rooms', roomCode, 'rounds', roundId, 'votes', playerId),
-      { optionId, votedAt: serverTimestamp(), playerName }
-    );
-    setMyVote(optionId);
+    if (myVote || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    setError(null);
+    try {
+      await setDoc(
+        doc(db, 'rooms', roomCode, 'rounds', roundId, 'votes', playerId),
+        { optionId, votedAt: serverTimestamp(), playerName }
+      );
+      setMyVote(optionId);
+    } catch (err) {
+      console.error('Vote failed:', err);
+      setError(`That didn't go through (${err.code || 'error'}). Tap your choice again.`);
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   }
 
   if (roundStatus === 'complete') {
@@ -164,12 +177,14 @@ export function VoteRoundPlayer({ roomCode, round, roundId, playerId, playerName
           <button
             key={o.id}
             onClick={() => castVote(o.id)}
-            style={styles.voteButton}
+            disabled={sending}
+            style={{ ...styles.voteButton, opacity: sending ? 0.5 : 1 }}
           >
             {o.text}
           </button>
         ))}
       </div>
+      {error && <p style={styles.error}>{error}</p>}
     </div>
   );
 }
@@ -177,6 +192,12 @@ export function VoteRoundPlayer({ roomCode, round, roundId, playerId, playerName
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
+  error: {
+    color: '#f44336',
+    fontSize: '0.9rem',
+    textAlign: 'center',
+    marginTop: '1rem',
+  },
   container: {
     fontFamily: 'sans-serif',
     maxWidth: '700px',

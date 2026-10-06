@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { db, auth, googleProvider } from '../firebase';
 import {
   doc, setDoc, updateDoc, onSnapshot,
   collection, addDoc, serverTimestamp,
-  getDocs, deleteDoc, writeBatch
+  getDoc, getDocs, deleteDoc, writeBatch
 } from 'firebase/firestore';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { generateRoomCode } from '../utils/roomCode';
@@ -12,6 +12,9 @@ import { ReactRoundHost } from '../components/rounds/ReactRound';
 import { VoteRoundHost } from '../components/rounds/VoteRound';
 import Credits from '../components/Credits';
 import QRCode from 'qrcode';
+import ConnectionBanner from '../components/ConnectionBanner';
+import { makeId } from '../utils/ids';
+import { loadHostSession, saveHostSession, clearHostSession } from '../utils/session';
 
 const ROUND_TYPES = [
   { value: 'submit', label: 'Submit — players enter free text' },
@@ -22,6 +25,9 @@ const ROUND_TYPES = [
 const DEFAULT_TIMERS = { submit: 180, react: 30, vote: 60 };
 
 const BASE_URL = 'https://roomvote-2026.web.app';
+
+// A reloaded host tab reopens its room only if the room is from today's class.
+const RESTORE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 // Add allowed host emails here. Only these accounts can access the host view.
 // Set to null to allow any Google account.
@@ -86,6 +92,7 @@ export default function HostView() {
   }
 
   async function handleSignOut() {
+    clearHostSession();
     await signOut(auth);
     // Reset session state so a different host doesn't inherit the UI
     setRoomCode(null);
@@ -160,6 +167,39 @@ function HostViewAuthed({ user, onSignOut }) {
   const [newRoundShowNames, setNewRoundShowNames] = useState(false);
   const [newRoundShowResultsLive, setNewRoundShowResultsLive] = useState(false);
 
+  const [restoring, setRestoring] = useState(() => !!loadHostSession(user.uid));
+  const [offline, setOffline] = useState(false);
+  const [listenError, setListenError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  // If the host tab reloads mid-class, reopen the same room instead of
+  // stranding every phone in it.
+  useEffect(() => {
+    const stored = loadHostSession(user.uid);
+    if (!stored) return;
+    let cancelled = false;
+    getDoc(doc(db, 'rooms', stored.roomCode))
+      .then(snap => {
+        if (cancelled) return;
+        const data = snap.data();
+        const createdMs = data?.createdAt?.toMillis?.() || 0;
+        const recent = Date.now() - createdMs < RESTORE_WINDOW_MS;
+        if (snap.exists() && data.hostUid === user.uid && data.status !== 'closed' && recent) {
+          setRoomCode(stored.roomCode);
+          setSessionName(data.sessionName || stored.sessionName || '');
+        } else {
+          clearHostSession();
+        }
+      })
+      .catch(err => {
+        console.error('Restore session failed:', err);
+        if (!cancelled) setActionError('Could not reopen your last room. Check your connection and reload.');
+      })
+      .finally(() => { if (!cancelled) setRestoring(false); });
+    return () => { cancelled = true; };
+  }, [user.uid]);
+
   // Generate QR code when room is created
   useEffect(() => {
     if (!roomCode) return;
@@ -172,37 +212,79 @@ function HostViewAuthed({ user, onSignOut }) {
   }, [roomCode]);
 
   async function createRoom() {
-    if (!sessionNameInput.trim()) return;
-    const code = generateRoomCode();
-    await setDoc(doc(db, 'rooms', code), {
-      sessionName: sessionNameInput.trim(),
-      status: 'lobby',
-      currentRoundId: null,
-      hostUid: user.uid,
-      createdAt: serverTimestamp(),
-    });
-    setRoomCode(code);
-    setSessionName(sessionNameInput.trim());
+    if (!sessionNameInput.trim() || busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      // Avoid reusing a code that already belongs to an earlier session.
+      let code = generateRoomCode();
+      for (let i = 0; i < 5 && (await getDoc(doc(db, 'rooms', code))).exists(); i++) {
+        code = generateRoomCode();
+      }
+      const name = sessionNameInput.trim();
+      await setDoc(doc(db, 'rooms', code), {
+        sessionName: name,
+        status: 'lobby',
+        currentRoundId: null,
+        hostUid: user.uid,
+        createdAt: serverTimestamp(),
+      });
+      saveHostSession({ roomCode: code, sessionName: name, uid: user.uid });
+      setRoomCode(code);
+      setSessionName(name);
+    } catch (err) {
+      console.error('Create room failed:', err);
+      setActionError(`Could not create the room (${err.code || 'error'}).`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function leaveRoom() {
+    clearHostSession();
+    setRoomCode(null);
+    setSessionName('');
+    setSessionNameInput('');
+    setRoomStatus('lobby');
+    setPlayers([]);
+    setRounds([]);
+    setCurrentRoundId(null);
+    setCurrentRound(null);
+    setQrDataUrl(null);
   }
 
   useEffect(() => {
     if (!roomCode) return;
 
-    const unsubRoom = onSnapshot(doc(db, 'rooms', roomCode), snap => {
-      const data = snap.data();
-      if (!data) return;
-      setRoomStatus(data.status);
-      setCurrentRoundId(data.currentRoundId);
-    });
+    const onListenError = err => {
+      console.error('Host listener failed:', err);
+      setListenError(err);
+    };
+
+    const unsubRoom = onSnapshot(
+      doc(db, 'rooms', roomCode),
+      { includeMetadataChanges: true },
+      snap => {
+        setListenError(null);
+        setOffline(snap.metadata.fromCache);
+        const data = snap.data();
+        if (!data) return;
+        setRoomStatus(data.status);
+        setCurrentRoundId(data.currentRoundId);
+      },
+      onListenError
+    );
 
     const unsubPlayers = onSnapshot(
       collection(db, 'rooms', roomCode, 'players'),
-      snap => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      snap => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      onListenError
     );
 
     const unsubRounds = onSnapshot(
       collection(db, 'rooms', roomCode, 'rounds'),
-      snap => setRounds(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      snap => setRounds(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      onListenError
     );
 
     return () => { unsubRoom(); unsubPlayers(); unsubRounds(); };
@@ -217,15 +299,18 @@ function HostViewAuthed({ user, onSignOut }) {
     setCurrentRound(round || null);
   }, [currentRoundId, rounds]);
 
+  const parsedOptions = newRoundOptions
+    .split('\n')
+    .map(t => t.trim())
+    .filter(Boolean);
+  const minOptions = newRoundType === 'vote' ? 2 : newRoundType === 'react' ? 1 : 0;
+  const canStartRound = !!newRoundPrompt.trim() && parsedOptions.length >= minOptions && !busy;
+
   async function startRound() {
-    if (!newRoundPrompt.trim()) return;
+    if (!canStartRound) return;
 
     const options = newRoundType !== 'submit'
-      ? newRoundOptions
-          .split('\n')
-          .map(t => t.trim())
-          .filter(Boolean)
-          .map(text => ({ id: crypto.randomUUID(), text }))
+      ? parsedOptions.map(text => ({ id: makeId(), text }))
       : [];
 
     const roundData = {
@@ -241,15 +326,25 @@ function HostViewAuthed({ user, onSignOut }) {
       createdAt: serverTimestamp(),
     };
 
-    const roundRef = await addDoc(
-      collection(db, 'rooms', roomCode, 'rounds'),
-      roundData
-    );
+    setBusy(true);
+    setActionError(null);
+    try {
+      const roundRef = await addDoc(
+        collection(db, 'rooms', roomCode, 'rounds'),
+        roundData
+      );
 
-    await updateDoc(doc(db, 'rooms', roomCode), {
-      currentRoundId: roundRef.id,
-      status: 'active',
-    });
+      await updateDoc(doc(db, 'rooms', roomCode), {
+        currentRoundId: roundRef.id,
+        status: 'active',
+      });
+    } catch (err) {
+      console.error('Start round failed:', err);
+      setActionError(`Could not start the round (${err.code || 'error'}). Try again.`);
+      return;
+    } finally {
+      setBusy(false);
+    }
 
     setNewRoundPrompt('');
     setNewRoundOptions('');
@@ -260,7 +355,7 @@ function HostViewAuthed({ user, onSignOut }) {
   }
 
   async function redoRound() {
-    if (!currentRound) return;
+    if (!currentRound || busy) return;
 
     const roundData = {
       type: currentRound.type,
@@ -271,25 +366,36 @@ function HostViewAuthed({ user, onSignOut }) {
       currentItemIndex: 0,
       options: currentRound.type !== 'submit'
         ? currentRound.options.map(opt => ({
-            id: crypto.randomUUID(),
+            id: makeId(),
             text: opt.text,
             ...(opt.authorId ? { authorId: opt.authorId } : {}),
           }))
         : [],
       showNames: currentRound.showNames ?? false,
       showResultsLive: currentRound.showResultsLive ?? false,
+      // Lets a phone find its answer from the round being redone.
+      redoOf: currentRoundId,
       createdAt: serverTimestamp(),
     };
 
-    const roundRef = await addDoc(
-      collection(db, 'rooms', roomCode, 'rounds'),
-      roundData
-    );
+    setBusy(true);
+    setActionError(null);
+    try {
+      const roundRef = await addDoc(
+        collection(db, 'rooms', roomCode, 'rounds'),
+        roundData
+      );
 
-    await updateDoc(doc(db, 'rooms', roomCode), {
-      currentRoundId: roundRef.id,
-      status: 'active',
-    });
+      await updateDoc(doc(db, 'rooms', roomCode), {
+        currentRoundId: roundRef.id,
+        status: 'active',
+      });
+    } catch (err) {
+      console.error('Redo round failed:', err);
+      setActionError(`Could not redo the round (${err.code || 'error'}). Try again.`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteSession() {
@@ -315,6 +421,7 @@ function HostViewAuthed({ user, onSignOut }) {
 
       await deleteDoc(doc(db, 'rooms', roomCode));
 
+      clearHostSession();
       setRoomCode(null);
       setSessionName('');
       setSessionNameInput('');
@@ -342,6 +449,16 @@ function HostViewAuthed({ user, onSignOut }) {
   const hasCompletedRounds = completedRounds.length > 0;
   const noActiveRound = !currentRound || currentRound.status === 'complete';
 
+  // Rolling credits on the host also rolls them on every phone.
+  async function setCreditsRolling(on) {
+    setShowCredits(on);
+    try {
+      await updateDoc(doc(db, 'rooms', roomCode), { creditsRolling: on });
+    } catch (err) {
+      console.error('Credits sync failed:', err);
+    }
+  }
+
   if (showCredits) {
     return (
       <Credits
@@ -349,8 +466,16 @@ function HostViewAuthed({ user, onSignOut }) {
         roomCode={roomCode}
         rounds={rounds}
         players={players}
-        onClose={() => setShowCredits(false)}
+        onClose={() => setCreditsRolling(false)}
       />
+    );
+  }
+
+  if (restoring) {
+    return (
+      <div style={styles.centered}>
+        <p style={{ color: '#888' }}>Reopening your room...</p>
+      </div>
     );
   }
 
@@ -371,23 +496,30 @@ function HostViewAuthed({ user, onSignOut }) {
         />
         <button
           onClick={createRoom}
-          disabled={!sessionNameInput.trim()}
+          disabled={!sessionNameInput.trim() || busy}
           style={styles.primaryButton}
         >
-          Create Room
+          {busy ? 'Creating...' : 'Create Room'}
         </button>
+        {actionError && <p style={styles.actionError}>{actionError}</p>}
       </div>
     );
   }
 
   return (
     <div style={styles.container}>
+      <ConnectionBanner offline={offline} error={listenError} />
 
       {/* Auth bar */}
       <div style={styles.authBar}>
         <span style={styles.authEmail}>{user.email}</span>
+        <button onClick={leaveRoom} style={styles.signOutButton} title="Close this screen and start a different session. Nothing is deleted.">
+          New session
+        </button>
         <button onClick={onSignOut} style={styles.signOutButton}>Sign out</button>
       </div>
+
+      {actionError && <p style={styles.actionError}>{actionError}</p>}
 
       {/* Header */}
       <div style={styles.header}>
@@ -410,11 +542,12 @@ function HostViewAuthed({ user, onSignOut }) {
 
       <hr style={styles.divider} />
 
-      {/* Active round */}
+            {/* Active round */}
       {currentRound && (
         <div style={styles.section}>
           {currentRound.type === 'submit' && (
             <SubmitRoundHost
+              key={currentRoundId}
               roomCode={roomCode}
               round={currentRound}
               roundId={currentRoundId}
@@ -424,6 +557,7 @@ function HostViewAuthed({ user, onSignOut }) {
           )}
           {currentRound.type === 'react' && (
             <ReactRoundHost
+              key={currentRoundId}
               roomCode={roomCode}
               round={currentRound}
               roundId={currentRoundId}
@@ -433,6 +567,7 @@ function HostViewAuthed({ user, onSignOut }) {
           )}
           {currentRound.type === 'vote' && (
             <VoteRoundHost
+              key={currentRoundId}
               roomCode={roomCode}
               round={currentRound}
               roundId={currentRoundId}
@@ -442,7 +577,7 @@ function HostViewAuthed({ user, onSignOut }) {
           )}
 
           <div style={styles.redoRow}>
-            <button onClick={redoRound} style={styles.redoButton}>
+            <button onClick={redoRound} disabled={busy} style={styles.redoButton}>
               ↺ Redo Round
             </button>
           </div>
@@ -479,7 +614,7 @@ function HostViewAuthed({ user, onSignOut }) {
               </button>
               {hasCompletedRounds && noActiveRound && (
                 <button
-                  onClick={() => setShowCredits(true)}
+                  onClick={() => setCreditsRolling(true)}
                   style={styles.creditsButton}
                 >
                   🎬 Roll Credits
@@ -562,6 +697,12 @@ function HostViewAuthed({ user, onSignOut }) {
                 </label>
               </div>
 
+              {newRoundType !== 'submit' && parsedOptions.length < minOptions && (
+                <p style={styles.formHint}>
+                  {newRoundType === 'vote' ? 'Add at least two options.' : 'Add at least one item.'}
+                </p>
+              )}
+
               <div style={styles.formButtons}>
                 <button
                   onClick={() => setShowNewRound(false)}
@@ -571,13 +712,13 @@ function HostViewAuthed({ user, onSignOut }) {
                 </button>
                 <button
                   onClick={startRound}
-                  disabled={!newRoundPrompt.trim()}
+                  disabled={!canStartRound}
                   style={{
                     ...styles.primaryButton,
-                    opacity: newRoundPrompt.trim() ? 1 : 0.5,
+                    opacity: canStartRound ? 1 : 0.5,
                   }}
                 >
-                  Start Round
+                  {busy ? 'Starting...' : 'Start Round'}
                 </button>
               </div>
             </div>
@@ -634,6 +775,16 @@ function HostViewAuthed({ user, onSignOut }) {
 }
 
 const styles = {
+  actionError: {
+    color: '#f44336',
+    fontSize: '0.9rem',
+    textAlign: 'center',
+  },
+  formHint: {
+    color: '#ff9800',
+    fontSize: '0.85rem',
+    margin: '0.5rem 0 0 0',
+  },
   container: {
     fontFamily: 'sans-serif',
     maxWidth: '800px',

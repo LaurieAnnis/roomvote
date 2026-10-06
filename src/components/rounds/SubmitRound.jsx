@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../../firebase';
 import {
-  doc, setDoc, updateDoc, onSnapshot,
+  doc, setDoc, getDoc, updateDoc, onSnapshot,
   collection, serverTimestamp
 } from 'firebase/firestore';
 import Timer from '../Timer';
@@ -19,7 +19,8 @@ export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName
       collection(db, 'rooms', roomCode, 'rounds', roundId, 'submissions'),
       snap => {
         setSubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }
+      },
+      err => console.error('Submissions listener failed:', err)
     );
     return () => unsub();
   }, [roomCode, roundId]);
@@ -120,33 +121,68 @@ export function SubmitRoundHost({ roomCode, round, roundId, players, sessionName
 // ─── Player ──────────────────────────────────────────────────────────────────
 
 export function SubmitRoundPlayer({ roomCode, round, roundId, playerId, playerName }) {
-  const [text, setText] = useState('');
+  // A draft saved on this phone wins, so a reload mid-typing loses nothing.
+  const [text, setText] = useState(() => loadDraft(roundId));
+  const [restoredFrom, setRestoredFrom] = useState(null);
   const [submitted, setSubmitted] = useState(false);
-  const [roundStatus, setRoundStatus] = useState(round.status);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const roundStatus = round.status;
+  const redoOf = round.redoOf || null;
 
+  // After a reload, check whether this player already submitted.
   useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, 'rooms', roomCode, 'rounds', roundId),
-      snap => {
-        const data = snap.data();
-        if (data) setRoundStatus(data.status);
-      }
-    );
-    return () => unsub();
-  }, [roomCode, roundId]);
+    let cancelled = false;
+    getDoc(doc(db, 'rooms', roomCode, 'rounds', roundId, 'submissions', playerId))
+      .then(snap => { if (!cancelled && snap.exists()) setSubmitted(true); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [roomCode, roundId, playerId]);
+
+  // On a redone round, fill in this player's answer from the round(s)
+  // being redone, so restarting a round never costs anyone their work.
+  useEffect(() => {
+    if (!redoOf || loadDraft(roundId)) return;
+    let cancelled = false;
+    findPreviousAnswer(roomCode, redoOf, playerId).then(previous => {
+      if (cancelled || !previous) return;
+      setText(current => {
+        if (current.trim()) return current;
+        setRestoredFrom('previous');
+        return previous;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [roomCode, roundId, redoOf, playerId]);
+
+  function handleChange(value) {
+    setText(value);
+    setRestoredFrom(null);
+    saveDraft(roundId, value);
+  }
 
   async function submit() {
-    if (!text.trim() || submitted) return;
-    await setDoc(
-      doc(db, 'rooms', roomCode, 'rounds', roundId, 'submissions', playerId),
-      {
-        text: text.trim(),
-        submittedAt: serverTimestamp(),
-        playerId,
-        playerName,
-      }
-    );
-    setSubmitted(true);
+    if (!text.trim() || submitted || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await setDoc(
+        doc(db, 'rooms', roomCode, 'rounds', roundId, 'submissions', playerId),
+        {
+          text: text.trim(),
+          submittedAt: serverTimestamp(),
+          playerId,
+          playerName,
+        }
+      );
+      setSubmitted(true);
+      clearDraft(roundId);
+    } catch (err) {
+      console.error('Submit failed:', err);
+      setError(`That didn't go through (${err.code || 'error'}). Tap Submit again.`);
+    } finally {
+      setSending(false);
+    }
   }
 
   if (roundStatus === 'complete') {
@@ -179,27 +215,77 @@ export function SubmitRoundPlayer({ roomCode, round, roundId, playerId, playerNa
         />
       )}
 
+      {restoredFrom && (
+        <p style={styles.restoredNote}>
+          Your answer from before is filled in. Edit it or tap Submit.
+        </p>
+      )}
+
       <textarea
         value={text}
-        onChange={e => setText(e.target.value)}
+        onChange={e => handleChange(e.target.value)}
         placeholder="Type your response..."
+        maxLength={1000}
         rows={4}
         style={styles.textarea}
       />
 
       <button
         onClick={submit}
-        disabled={!text.trim()}
+        disabled={!text.trim() || sending}
         style={{
           ...styles.primaryButton,
           opacity: text.trim() ? 1 : 0.5,
           cursor: text.trim() ? 'pointer' : 'default',
         }}
       >
-        Submit
+        {sending ? 'Sending…' : 'Submit'}
       </button>
+      {error && <p style={styles.error}>{error}</p>}
     </div>
   );
+}
+
+// ─── Answer recovery ─────────────────────────────────────────────────────────
+
+const DRAFT_PREFIX = 'roomvote:draft:';
+
+function loadDraft(roundId) {
+  try {
+    return localStorage.getItem(DRAFT_PREFIX + roundId) || '';
+  } catch {
+    return '';
+  }
+}
+
+function saveDraft(roundId, value) {
+  try {
+    if (value) localStorage.setItem(DRAFT_PREFIX + roundId, value);
+    else localStorage.removeItem(DRAFT_PREFIX + roundId);
+  } catch {
+    // storage unavailable: draft lasts until reload
+  }
+}
+
+function clearDraft(roundId) {
+  saveDraft(roundId, '');
+}
+
+// Walks back through redo links (a redo of a redo) until it finds this
+// player's submission. Stops after a few hops.
+async function findPreviousAnswer(roomCode, roundId, playerId) {
+  let id = roundId;
+  for (let hop = 0; id && hop < 5; hop++) {
+    try {
+      const sub = await getDoc(doc(db, 'rooms', roomCode, 'rounds', id, 'submissions', playerId));
+      if (sub.exists() && sub.data().text) return sub.data().text;
+      const prev = await getDoc(doc(db, 'rooms', roomCode, 'rounds', id));
+      id = prev.data()?.redoOf || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
@@ -280,6 +366,16 @@ const styles = {
     resize: 'vertical',
     marginBottom: '1rem',
     boxSizing: 'border-box',
+  },
+  restoredNote: {
+    color: '#4caf50',
+    fontSize: '0.9rem',
+    margin: '0 0 0.5rem 0',
+  },
+  error: {
+    color: '#f44336',
+    fontSize: '0.9rem',
+    marginTop: '0.75rem',
   },
   primaryButton: {
     padding: '0.75rem 2rem',
